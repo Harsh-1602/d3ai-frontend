@@ -274,7 +274,7 @@ const teamMembers = [
     name: 'Harsh Gupta',
     role: 'Lead Developer',
     expertise: 'Full Stack & AI Development',
-    image: '/images/team/harsh-gupta.jpg',
+    image: '/images/team/harsh-gupta.jpeg',
     bio: 'Expert in AI/ML and drug discovery technologies with a focus on developing innovative solutions.',
     social: {
       linkedin: '#',
@@ -286,7 +286,7 @@ const teamMembers = [
     name: 'Chanchal Kuntal',
     role: 'Research Lead',
     expertise: 'Drug Discovery & ML',
-    image: '/images/team/chanchal-kuntal.jpg',
+    image: '/images/team/chanchal-kuntal.png',
     bio: 'Specialized in molecular modeling and AI-driven drug discovery processes.',
     social: {
       linkedin: '#',
