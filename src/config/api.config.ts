@@ -15,7 +15,7 @@ const getApiBaseUrl = (): string => {
   }
   
   // Default production URL (your Vercel-deployed backend)
-  return 'https://d3ai-backend.vercel.app';
+  return 'https://d3ai-backend.onrender.com';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
