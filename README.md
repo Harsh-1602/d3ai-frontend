@@ -52,7 +52,8 @@ npm run dev
 The app will be available at http://localhost:3000. 🎉
 
 ## 👥 Contributors
-💡 Team D3AI – Chanchal Kuntal [https://www.linkedin.com/in/chanchal-kuntal-6b5506251/]  
+💡 Team D3AI  
+Chanchal Kuntal [https://www.linkedin.com/in/chanchal-kuntal-6b5506251/]  
 Hrash Gupta [https://www.linkedin.com/in/harsh-gupta-462866205/]
 
 🙌 Feel free to contribute! Check out our CONTRIBUTING.md for guidelines.
