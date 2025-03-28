@@ -30,7 +30,7 @@ import {
 import { styled } from '@mui/system';
 import { proteinApi } from '../utils/api';
 
-interface Protein {
+export interface Protein {
   id: string;
   name: string;
   pdb_id?: string;
@@ -44,7 +44,7 @@ interface Protein {
   updated_at?: string;
 }
 
-interface ProteinCardProps {
+export interface ProteinCardProps {
   protein: Protein;
   isSelected: boolean;
   onSelectChange: (protein: Protein, isSelected: boolean) => void;

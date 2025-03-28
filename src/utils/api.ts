@@ -10,6 +10,20 @@ const proteinDrugCache = new Map<string, Promise<any>>();
 // Event bus for protein drug updates
 const proteinDrugEventBus = new EventTarget();
 
+export interface Molecule {
+  id: string;
+  smile: string;
+  name: string;
+  description?: string;
+  is_valid: boolean;
+  properties?: any;
+  visualization_data?: any;
+  structure_img?: string;  // Image from PubChem API
+  similarity_to_parent?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
  * Generic API request function with error handling
  */
@@ -34,19 +48,44 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
       ...options,
       headers,
       mode: 'cors',
-      credentials: 'include'
+      credentials: 'same-origin'
     });
     
     // Check if the request was successful
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(`API Error (${response.status}): ${errorText}`);
+      const error = new Error(`API Error (${response.status}): ${errorText}`);
+      // Add status property to the error for easier checking in components
+      (error as any).status = response.status;
+      throw error;
     }
     
     // Parse the JSON response
     const data = await response.json();
     return data as T;
-  } catch (error) {
+  } catch (error: any) {
+    // Check for common network errors and enhance the error message
+    if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
+      const enhancedError = new Error(
+        'Server connection error: Unable to reach the backend server. ' +
+        'Please ensure the backend is running at http://localhost:8000'
+      );
+      enhancedError.name = 'ConnectionError';
+      console.error('API Request failed:', enhancedError);
+      throw enhancedError;
+    }
+    
+    // Check for CORS errors (which don't provide detailed information)
+    if (error.message && error.message.includes('been blocked by CORS')) {
+      const corsError = new Error(
+        'CORS Error: The request was blocked by CORS policy. ' +
+        'This usually means the backend server is not running or not properly configured.'
+      );
+      corsError.name = 'CORSError';
+      console.error('API Request failed:', corsError);
+      throw corsError;
+    }
+    
     console.error('API Request failed:', error);
     throw error;
   }
@@ -328,7 +367,16 @@ export const moleculeApi = {
   visualize2D: (smiles: string) => 
     fetchApi<{image: string}>(`molecules/visualize/2d`, {
       method: 'POST',
-      body: JSON.stringify({ smiles }),
+      body: JSON.stringify({ smile: smiles }),
+    }),
+  
+  /**
+   * Get a PubChem visualization of a molecule
+   */
+  visualizePubChem: (smiles: string) => 
+    fetchApi<{image: string}>(`molecules/visualize/pubchem`, {
+      method: 'POST',
+      body: JSON.stringify({ smile: smiles }),
     }),
   
   /**
@@ -338,6 +386,31 @@ export const moleculeApi = {
     fetchApi<any>(`molecules/properties`, {
       method: 'POST',
       body: JSON.stringify({ smiles }),
+    }),
+
+  /**
+   * Generate molecules using NVIDIA GenMol API
+   */
+  generateWithNvidiaGenMol: (data: {
+    smiles: string;
+    num_molecules?: number;
+    temperature?: string;
+    noise?: string;
+    step_size?: number;
+    scoring?: string;
+    unique?: boolean;
+  }) => 
+    fetchApi<Molecule[]>(`molecules/generate/nvidia-genmol`, {
+      method: 'POST',
+      body: JSON.stringify({
+        smiles: data.smiles,
+        num_molecules: data.num_molecules || 30,
+        temperature: data.temperature || "1",
+        noise: data.noise || "1",
+        step_size: data.step_size || 1,
+        scoring: data.scoring || "QED",
+        unique: data.unique || false
+      }),
     }),
 };
 
@@ -363,4 +436,62 @@ export const drugDiscoveryApi = {
   },
   
   // Add other drug discovery endpoints as needed
+};
+
+/**
+ * Utility function to get a molecule image from any available source
+ */
+export const fetchMoleculeImage = async (smiles: string): Promise<string | null> => {
+  // Validate input
+  if (!smiles || typeof smiles !== 'string' || !smiles.trim()) {
+    console.error('Invalid SMILES string provided to fetchMoleculeImage:', smiles);
+    return null;
+  }
+  
+  console.log(`fetchMoleculeImage: Attempting to fetch image for SMILES: "${smiles}"`);
+  
+  try {
+    // Helper function to ensure proper base64 image format
+    const formatBase64Image = (base64Data: string): string => {
+      // If it already starts with data:image/, return as is
+      if (base64Data.startsWith('data:image/')) {
+        return base64Data;
+      }
+      // Otherwise add the prefix
+      return `data:image/png;base64,${base64Data}`;
+    };
+
+    // Try PubChem first
+    console.log('fetchMoleculeImage: Trying PubChem API...');
+    try {
+      const pubchemResult = await moleculeApi.visualizePubChem(smiles);
+      if (pubchemResult?.image) {
+        console.log('fetchMoleculeImage: Successfully got image from PubChem');
+        return formatBase64Image(pubchemResult.image);
+      }
+    } catch (pubchemError) {
+      console.error('fetchMoleculeImage: PubChem API error:', pubchemError);
+      // Continue to next method
+    }
+    
+    // Fall back to visualization API
+    console.log('fetchMoleculeImage: Trying 2D visualization API...');
+    try {
+      const result = await moleculeApi.visualize2D(smiles);
+      if (result?.image) {
+        console.log('fetchMoleculeImage: Successfully got image from 2D visualization API');
+        return formatBase64Image(result.image);
+      }
+    } catch (visualizeError) {
+      console.error('fetchMoleculeImage: 2D visualization API error:', visualizeError);
+      // Continue to next method
+    }
+    
+    // If all else fails, use direct PubChem URL (may not work due to CORS)
+    console.log('fetchMoleculeImage: Using direct PubChem URL as fallback');
+    return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(smiles)}/PNG`;
+  } catch (error) {
+    console.error('fetchMoleculeImage: Unhandled error:', error);
+    return null;
+  }
 }; 

@@ -13,15 +13,41 @@ import {
   Alert,
   useTheme,
   Divider,
+  Tabs,
+  Tab,
+  Card,
+  CardContent,
+  Checkbox,
+  Chip,
 } from '@mui/material';
 import { motion } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Float } from '@react-three/drei';
-import DiseaseSearch from '../components/DiseaseSearch';
-import ProteinCard from '../components/ProteinCard';
+import DiseaseSearch, { DiseaseSuggestion, DiseaseSearchProps } from '../components/DiseaseSearch';
+import ProteinCard, { Protein, ProteinCardProps } from '../components/ProteinCard';
 import MoleculeCard from '../components/MoleculeCard';
 import MoleculeVisualization from '../components/MoleculeVisualization';
-import { proteinApi, moleculeApi } from '../utils/api';
+import MoleculeGenerator from '../components/MoleculeGeneration/MoleculeGenerator';
+import NvidiaGenMolGenerator from '../components/MoleculeGeneration/NvidiaGenMolGenerator';
+import { proteinApi, moleculeApi, Molecule } from '../utils/api';
+
+// Import or define the DrugMolecule interface
+interface DrugMolecule {
+  id?: string;
+  molecule_id?: string;
+  name?: string;
+  smiles?: string;
+  smile?: string;
+  chembl_id?: string;
+  molecule_chembl_id?: string;
+  molecular_weight?: number;
+  molecular_formula?: string;
+  activity_value?: number;
+  activity_type?: string;
+  mechanism_of_action?: string;
+  properties?: Record<string, any>;
+  // Add other potential properties from the stream API
+}
 
 const steps = [
   'Disease Selection',
@@ -36,44 +62,33 @@ const pageVariants = {
   exit: { opacity: 0, y: -20 },
 };
 
-interface DiseaseSuggestion {
-  id: string;
-  name: string;
-  aliases?: string[];
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
 }
 
-interface Protein {
-  id: string;
-  name: string;
-  pdb_id?: string;
-  uniprot_id?: string;
-  sequence?: string;
-  description?: string;
-  disease_id?: string;
-  disease_name?: string;
-  binding_site?: any;
-  created_at?: string;
-  updated_at?: string;
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`molecule-generation-tabpanel-${index}`}
+      aria-labelledby={`molecule-generation-tab-${index}`}
+      {...other}
+    >
+      {value === index && <Box>{children}</Box>}
+    </div>
+  );
 }
 
-interface DrugMolecule {
-  id?: string;
-  molecule_id?: string;
-  chembl_id?: string;
-  molecule_chembl_id?: string;
-  name?: string;
-  smiles: string;
-  molecular_formula?: string;
-  molecular_weight?: number;
-  inchi_key?: string;
-  properties?: Record<string, any>;
-  target_id?: string;
-  target_chembl_id?: string;
-  target_name?: string;
-  activity_value?: number;
-  activity_type?: string;
-  mechanism_of_action?: string;
-  _metadata?: Record<string, any>;
+function a11yProps(index: number) {
+  return {
+    id: `molecule-generation-tab-${index}`,
+    'aria-controls': `molecule-generation-tabpanel-${index}`,
+  };
 }
 
 interface DrugData {
@@ -92,25 +107,51 @@ interface DrugApiResponse {
   message?: string;
 }
 
+// Add a helper function to convert from Molecule to DrugMolecule
+const convertToDrugMolecule = (molecule: Molecule): DrugMolecule => {
+  return {
+    id: molecule.id,
+    name: molecule.name || '',
+    smiles: molecule.smile || '',
+    molecular_formula: molecule.properties?.molecular_formula || '',
+    molecular_weight: Number(molecule.properties?.molecular_weight || 0),
+    properties: molecule.properties || {},
+    // Add any other required fields with defaults
+  };
+};
+
 const DrugDiscovery = () => {
   const [activeStep, setActiveStep] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  // Disease selection state
   const [selectedDisease, setSelectedDisease] = useState<DiseaseSuggestion | null>(null);
-  
-  // Protein selection state
   const [proteins, setProteins] = useState<Protein[]>([]);
   const [selectedProteins, setSelectedProteins] = useState<{[id: string]: boolean}>({});
-  
-  // Drug molecules state
-  const [drugMolecules, setDrugMolecules] = useState<DrugMolecule[]>([]);
-  const [loadingChemblIds, setLoadingChemblIds] = useState<{[id: string]: boolean}>({});
-  const [drugDataByProtein, setDrugDataByProtein] = useState<Record<string, DrugData>>({});
-  
-  // Handle disease selection
-  const handleDiseaseSelect = async (disease: DiseaseSuggestion) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [genTabValue, setGenTabValue] = useState<number>(0);
+  const [generatedMolecules, setGeneratedMolecules] = useState<Molecule[]>([]);
+  const [proteinDrugs, setProteinDrugs] = useState<DrugMolecule[]>([]);
+  const [selectedDrugs, setSelectedDrugs] = useState<{[id: string]: boolean}>({});
+  const [loadingDrugs, setLoadingDrugs] = useState(false);
+  const [drugError, setDrugError] = useState<string | null>(null);
+  const theme = useTheme();
+
+  const handleNext = () => {
+    setActiveStep((prevActiveStep) => prevActiveStep + 1);
+  };
+
+  const handleBack = () => {
+    setActiveStep((prevActiveStep) => prevActiveStep - 1);
+  };
+
+  const handleReset = () => {
+    setActiveStep(0);
+    setSelectedDisease(null);
+    setProteins([]);
+    setSelectedProteins({});
+    setGeneratedMolecules([]);
+  };
+
+  const onDiseaseSelect = async (disease: DiseaseSuggestion) => {
     setSelectedDisease(disease);
     setLoading(true);
     setError(null);
@@ -134,7 +175,6 @@ const DrugDiscovery = () => {
       
       // Clear any previously selected proteins
       setSelectedProteins({});
-      setDrugMolecules([]);
       
     } catch (error) {
       console.error('Error fetching proteins:', error);
@@ -145,8 +185,7 @@ const DrugDiscovery = () => {
     }
   };
   
-  // Handle protein selection
-  const handleProteinSelect = (protein: Protein, isSelected: boolean) => {
+  const handleProteinSelectChange = (protein: Protein, isSelected: boolean) => {
     if (!protein || !protein.id) return;
     
     setSelectedProteins(prev => ({
@@ -155,238 +194,150 @@ const DrugDiscovery = () => {
     }));
   };
   
-  // Get selected proteins array
-  const getSelectedProteinsArray = (): Protein[] => {
-    if (!proteins) return [];
-    return proteins.filter(protein => protein && protein.id && selectedProteins[protein.id]);
+  const handleGenTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setGenTabValue(newValue);
   };
   
-  // Handle next step button click
-  const handleNext = async () => {
+  const handleMoleculesGenerated = (molecules: Molecule[]) => {
+    setGeneratedMolecules(molecules);
+    // If we're at the protein selection step, move to results step
+    if (activeStep === 1) {
+      setActiveStep(3); // Move to results step
+    }
+  };
+
+  // Function to fetch drugs for selected proteins
+  const fetchDrugsForSelectedProteins = async () => {
+    // Get selected protein IDs
+    const selectedProteinIds = Object.entries(selectedProteins)
+      .filter(([_, isSelected]) => isSelected)
+      .map(([id, _]) => id);
+      
+    if (selectedProteinIds.length === 0) {
+      setDrugError("No proteins selected. Please select at least one protein.");
+      return;
+    }
+    
+    setLoadingDrugs(true);
+    setDrugError(null);
+    
     try {
-      if (activeStep === 0) {
-        // Moving from Disease Selection to Protein Selection
-        setActiveStep(1);
-      } 
-      else if (activeStep === 1) {
-        // Move to Molecule Analysis step immediately
-        setActiveStep(2);
-        setLoading(true);
-        setError(null);
-        
-        const selectedProteinsArr = getSelectedProteinsArray();
-        
-        if (selectedProteinsArr.length === 0) {
-          throw new Error('Please select at least one protein to continue.');
+      // Get selected protein objects
+      const selectedProteinObjects = proteins.filter(protein => 
+        selectedProteinIds.includes(protein.id)
+      );
+      
+      // Fetch drugs for selected proteins
+      let allDrugs: DrugMolecule[] = [];
+      const results = await proteinApi.getDrugsForProteins(selectedProteinObjects);
+      
+      // Combine all drugs from different proteins
+      results.forEach(result => {
+        if (result.status === 'success' && result.drugs && result.drugs.length > 0) {
+          // Map the API response format to our DrugMolecule interface
+          const mappedDrugs = result.drugs.map((drug: any) => ({
+            id: drug.id || drug.molecule_id || drug.molecule_chembl_id,
+            molecule_id: drug.molecule_id,
+            molecule_chembl_id: drug.molecule_chembl_id,
+            chembl_id: drug.chembl_id,
+            name: drug.name || drug.pref_name,
+            smiles: drug.smiles || drug.smile || drug.canonical_smiles,
+            smile: drug.smile || drug.smiles || drug.canonical_smiles,
+            molecular_weight: drug.molecular_weight || drug.properties?.molecular_weight,
+            activity_value: drug.activity_value,
+            activity_type: drug.activity_type,
+            mechanism_of_action: drug.mechanism_of_action
+          }));
+          allDrugs = [...allDrugs, ...mappedDrugs];
         }
-        
-        console.log(`Starting drug fetch for ${selectedProteinsArr.length} proteins:`, selectedProteinsArr);
-        
-        // Clear previous drug data
-        setDrugDataByProtein({});
-        setDrugMolecules([]);
-        
-        try {
-          // Subscribe to protein drug updates
-          const unsubscribe = proteinApi.subscribeToProteinDrugUpdates((data: DrugData) => {
-            console.log('Received drug update:', data);
-            
-            setDrugDataByProtein(prev => ({
-              ...prev,
-              [data.proteinId]: data
-            }));
-            
-            // Update drugMolecules with the new data
-            if (data.status === 'success' && Array.isArray(data.drugs)) {
-              console.log(`Processing ${data.drugs.length} drugs from update for protein ${data.proteinName}`);
-              console.log('First drug in update:', data.drugs[0]); // Debug log
-              
-              // Process all drugs first
-              const newDrugs = data.drugs.map(drug => {
-                if (!drug) {
-                  console.log('Found null/undefined drug entry');
-                  return null;
-                }
-                
-                // Debug log for drug properties
-                console.log('Processing drug:', drug);
-                
-                // Map the properties from the API response to our interface
-                const mappedDrug = {
-                  chembl_id: drug.molecule_chembl_id,
-                  name: drug.name || drug.molecule_chembl_id,
-                  smiles: drug.smiles,
-                  target_id: drug.target_chembl_id,
-                  target_name: data.proteinName,
-                  activity_type: drug.mechanism_of_action,
-                  properties: {
-                    mechanism_of_action: drug.mechanism_of_action
-                  }
-                };
-                
-                // Log the mapped drug
-                console.log('Mapped drug:', mappedDrug);
-                
-                // Check for valid key
-                const key = mappedDrug.chembl_id || mappedDrug.smiles;
-                if (!key) {
-                  console.log('Drug has no valid key identifiers');
-                  return null;
-                }
-                
-                // Processed drug
-                const processedDrug = {
-                  ...mappedDrug,
-                  id: key
-                };
-                console.log('Processed drug:', processedDrug);
-                return processedDrug;
-              }).filter(Boolean) as DrugMolecule[];
-              
-              console.log(`Processed ${newDrugs.length} valid drugs for ${data.proteinName}`);
-              
-              setDrugMolecules(prev => {
-                // Create a map of existing drugs
-                const existingDrugs = new Map(prev.map(drug => [
-                  drug.chembl_id || drug.molecule_id || drug.id || drug.smiles,
-                  drug
-                ]));
-                
-                // Add new drugs to the map
-                let addedCount = 0;
-                newDrugs.forEach(drug => {
-                  const key = drug.chembl_id || drug.molecule_id || drug.id || drug.smiles;
-                  if (!existingDrugs.has(key)) {
-                    existingDrugs.set(key, drug);
-                    addedCount++;
-                    console.log(`Added drug with key ${key} for protein ${data.proteinName}`);
-                  }
-                });
-                
-                const updatedDrugs = Array.from(existingDrugs.values());
-                console.log(`Drug state update summary:`, {
-                  previousCount: prev.length,
-                  newDrugsProcessed: newDrugs.length,
-                  newDrugsAdded: addedCount,
-                  totalAfterUpdate: updatedDrugs.length
-                });
-                return updatedDrugs;
-              });
-            }
-          });
-          
-          // Start fetching drugs for all selected proteins
-          console.log('Calling getDrugsForProteins with:', selectedProteinsArr);
-          const apiResponse = await proteinApi.getDrugsForProteins(
-            selectedProteinsArr.map(protein => ({
-              id: protein.id,
-              name: protein.name,
-              uniprot_id: protein.uniprot_id || protein.pdb_id
-            }))
-          );
-          
-          // Stop loading after ensuring we have some data
-          setTimeout(() => {
-            setLoading(false);
-            
-            // Log final drug count
-            console.log('Final drug molecules count:', drugMolecules.length);
-            
-            // Cleanup subscription after a delay to ensure we got all updates
-            setTimeout(() => {
-              unsubscribe();
-              console.log('Unsubscribed from drug updates');
-            }, 5000);
-          }, 1000);
-          
-        } catch (error: any) {
-          console.error('Error fetching drugs:', error);
-          setError(error.message || 'Failed to fetch drug data');
-          setLoading(false);
-        }
-        
-      } else if (activeStep === 2) {
-        // Moving from Molecule Analysis to Results
-        setActiveStep(3);
+      });
+      
+      // Remove duplicates based on molecule ID or ChEMBL ID
+      const uniqueDrugs = allDrugs.filter((drug, index, self) =>
+        index === self.findIndex((d) => (
+          (drug.molecule_chembl_id && d.molecule_chembl_id === drug.molecule_chembl_id) || 
+          (drug.chembl_id && d.chembl_id === drug.chembl_id) ||
+          (drug.id && d.id === drug.id)
+        ))
+      );
+      
+      setProteinDrugs(uniqueDrugs);
+      
+      if (uniqueDrugs.length === 0) {
+        setDrugError("No drug molecules found for the selected proteins.");
       }
-    } catch (error: any) {
-      console.error('Error during step transition:', error);
-      setError(error.message || 'An error occurred while processing your request.');
-      setLoading(false);
+      
+    } catch (error) {
+      console.error('Error fetching drugs for proteins:', error);
+      setDrugError('Failed to fetch drug molecules for the selected proteins.');
+    } finally {
+      setLoadingDrugs(false);
     }
   };
   
-  const handleBack = () => {
-    setActiveStep(activeStep - 1);
+  // Effect to fetch drugs when going to the molecule generation step
+  useEffect(() => {
+    if (activeStep === 2) {
+      fetchDrugsForSelectedProteins();
+    }
+  }, [activeStep]);
+  
+  // Handler for drug molecule selection
+  const handleDrugSelect = (drugId: string, isSelected: boolean) => {
+    setSelectedDrugs(prev => ({
+      ...prev,
+      [drugId]: isSelected
+    }));
   };
   
-  const canProceed = () => {
-    if (activeStep === 0) {
-      return !!selectedDisease;
-    } else if (activeStep === 1) {
-      return Object.values(selectedProteins).some(selected => selected);
+  // Function to get selected drug smiles strings for use as seeds
+  const getSelectedDrugSmiles = (): string[] => {
+    const selectedDrugIds = Object.entries(selectedDrugs)
+      .filter(([_, isSelected]) => isSelected)
+      .map(([id, _]) => id);
+      
+    return proteinDrugs
+      .filter(drug => selectedDrugIds.includes(drug.id || drug.molecule_id || drug.molecule_chembl_id || ''))
+      .map(drug => drug.smiles || drug.smile || '')
+      .filter(smile => smile !== ''); // Filter out empty strings
+  };
+  
+  // Handler for generating molecules based on selected drugs
+  const handleGenerateFromSelectedDrugs = () => {
+    const selectedSmiles = getSelectedDrugSmiles();
+    // Set active tab to the appropriate generation method
+    if (genTabValue === 0) {
+      // Standard generation
+      // Pass selected drug SMILES to the MoleculeGenerator component
+      // This will be handled by the component prop
+    } else if (genTabValue === 1) {
+      // NVIDIA GenMol
+      // Pass the first selected SMILES to NvidiaGenMolGenerator
+      // This will be handled by the component prop
     }
-    return true;
   };
 
   return (
     <motion.div
-      variants={pageVariants}
       initial="initial"
       animate="animate"
       exit="exit"
+      variants={pageVariants}
       transition={{ duration: 0.5 }}
     >
-      <Box sx={{ 
-        background: '#111827',
-        minHeight: '100vh',
-        pt: 4,
-        pb: 4,
-      }}>
-        <Container maxWidth="lg">
+      <Container maxWidth="lg" sx={{ mt: 6, mb: 8 }}>
           <Paper 
+          elevation={3} 
             sx={{ 
               p: 4,
-              background: 'rgba(17, 24, 39, 0.8)',
-              backdropFilter: 'blur(10px)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)',
-            }}
-          >
-            <Typography 
-              component="h1" 
-              variant="h4" 
-              align="center" 
-              gutterBottom
-              sx={{
-                background: 'linear-gradient(45deg, #818cf8, #e879f9)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                fontWeight: 700,
                 mb: 4,
+            borderRadius: 2
               }}
             >
-              Drug Discovery Process
+          <Typography variant="h4" gutterBottom>
+            Disease-based Drug Discovery
             </Typography>
-            <Stepper 
-              activeStep={activeStep} 
-              sx={{ 
-                pt: 3, 
-                pb: 5,
-                '& .MuiStepLabel-root .Mui-completed': {
-                  color: '#818cf8',
-                },
-                '& .MuiStepLabel-root .Mui-active': {
-                  color: '#e879f9',
-                },
-                '& .MuiStepLabel-label': {
-                  color: 'rgba(255, 255, 255, 0.7)',
-                },
-                '& .MuiStepConnector-line': {
-                  borderColor: 'rgba(255, 255, 255, 0.1)',
-                },
-              }}
-            >
+          <Stepper activeStep={activeStep} alternativeLabel sx={{ my: 4 }}>
               {steps.map((label) => (
                 <Step key={label}>
                   <StepLabel>{label}</StepLabel>
@@ -394,325 +345,303 @@ const DrugDiscovery = () => {
               ))}
             </Stepper>
 
-            {error && (
-              <Alert 
-                severity="error" 
-                onClose={() => setError(null)} 
-                sx={{ mb: 3, background: 'rgba(239, 68, 68, 0.2)', color: 'white' }}
-              >
-                {error}
-              </Alert>
-            )}
-
-            <Box sx={{ position: 'relative', minHeight: 400 }}>
-              {loading && activeStep === 0 && (
-                <Box 
-                  sx={{ 
-                    position: 'absolute', 
-                    top: 0, 
-                    left: 0, 
-                    right: 0, 
-                    bottom: 0, 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                    zIndex: 10,
-                    borderRadius: 1
-                  }}
-                >
-                  <CircularProgress size={60} sx={{ color: '#e879f9' }} />
-                </Box>
-              )}
-              
+          {/* Step 1: Disease Selection */}
+          {activeStep === 0 && (
               <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
                 transition={{ duration: 0.5 }}
-                key={activeStep}
-              >
-                {/* Disease Selection Step */}
-                {activeStep === 0 && (
-                  <Box sx={{ mt: 4 }}>
-                    <Grid container spacing={4}>
-                      <Grid item xs={12} md={6}>
-                        <Typography 
-                          variant="h6" 
-                          gutterBottom
-                          sx={{ 
-                            color: '#e879f9',
-                            fontWeight: 600,
-                          }}
-                        >
+            >
+              <Typography variant="h5" gutterBottom>
                           Select a Disease
                         </Typography>
-                        
-                        <DiseaseSearch 
-                          onDiseaseSelect={handleDiseaseSelect} 
-                          label="Search for a disease"
-                          placeholder="Type disease name (e.g., Diabetes, Cancer, Alzheimer's)"
-                        />
-                        
-                        {selectedDisease && (
-                          <Box mt={3}>
-                            <Typography variant="subtitle1" color="white" fontWeight={600}>
-                              Selected Disease:
-                            </Typography>
-                            <Paper 
-                              sx={{ 
-                                p: 2, 
-                                mt: 1, 
-                                background: 'rgba(129, 140, 248, 0.1)',
-                                borderLeft: '4px solid #818cf8'
-                              }}
-                            >
-                              <Typography variant="body1" color="white">
-                                {selectedDisease.name}
+              <Typography variant="body1" color="text.secondary" paragraph>
+                Start by selecting a disease to find associated proteins and potential drug candidates.
                               </Typography>
                               
-                              {selectedDisease.aliases && selectedDisease.aliases.length > 0 && (
-                                <Typography 
-                                  variant="body2" 
-                                  sx={{ color: 'rgba(255, 255, 255, 0.7)', mt: 1 }}
-                                >
-                                  Also known as: {selectedDisease.aliases.join(', ')}
-                                </Typography>
-                              )}
-                            </Paper>
-                        </Box>
-                        )}
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Box sx={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Canvas>
-                            <Suspense fallback={null}>
-                              <ambientLight intensity={0.5} />
-                              <pointLight position={[10, 10, 10]} />
-                              <Float
-                                speed={4}
-                                rotationIntensity={1}
-                                floatIntensity={2}
-                              >
-                                <MoleculeVisualization />
-                              </Float>
-                              <OrbitControls enableZoom={false} autoRotate />
-                            </Suspense>
-                          </Canvas>
-                        </Box>
-                      </Grid>
-                    </Grid>
-                  </Box>
-                )}
+              <DiseaseSearch onDiseaseSelect={onDiseaseSelect} />
 
-                {/* Protein Selection Step */}
+              <Box sx={{ display: 'flex', flexDirection: 'row', pt: 4 }}>
+                <Box sx={{ flex: '1 1 auto' }} />
+                <Button 
+                  variant="contained" 
+                  onClick={handleNext}
+                  disabled={!selectedDisease}
+                  sx={{ mr: 1 }}
+                >
+                  Next
+                </Button>
+                        </Box>
+            </motion.div>
+          )}
+          
+          {/* Step 2: Protein Selection */}
                 {activeStep === 1 && (
-                  <Box sx={{ mt: 4 }}>
-                    <Typography 
-                      variant="h6" 
-                      gutterBottom
-                      sx={{ 
-                        color: '#e879f9',
-                        fontWeight: 600,
-                        mb: 3
-                      }}
-                    >
-                      Select Proteins for {selectedDisease?.name}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
+              <Typography variant="h5" gutterBottom>
+                Select Target Proteins
+                    </Typography>
+              <Typography variant="body1" color="text.secondary" paragraph>
+                Select one or more proteins associated with {selectedDisease?.name} to target for drug discovery.
                     </Typography>
                     
-                    <Typography 
-                      variant="body2" 
-                      color="rgba(255, 255, 255, 0.7)"
-                      sx={{ mb: 3 }}
-                    >
-                      Select one or more proteins to find drug molecules that target these proteins.
-                    </Typography>
-                    
-                    {proteins.length === 0 ? (
-                      <Box sx={{ textAlign: 'center', py: 4 }}>
-                        <Typography variant="body1" color="rgba(255, 255, 255, 0.7)">
-                          No proteins found for this disease. Please go back and select another disease.
-                        </Typography>
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
+                  <CircularProgress />
                       </Box>
-                    ) : (
-                      <Grid container spacing={3}>
-                        {proteins.map(protein => (
+              ) : error ? (
+                <Alert severity="error" sx={{ my: 2 }}>{error}</Alert>
+              ) : proteins.length === 0 ? (
+                <Alert severity="info" sx={{ my: 2 }}>
+                  No proteins found for {selectedDisease?.name}. Please select a different disease.
+                </Alert>
+              ) : (
+                <Grid container spacing={3} sx={{ my: 2 }}>
+                  {proteins.map((protein) => (
                           <Grid item xs={12} sm={6} md={4} key={protein.id}>
                             <ProteinCard 
                               protein={protein}
-                              isSelected={!!selectedProteins[protein.id]}
-                              onSelectChange={handleProteinSelect}
+                        isSelected={selectedProteins[protein.id]}
+                        onSelectChange={(protein, isSelected) => handleProteinSelectChange(protein, isSelected)}
                             />
                           </Grid>
                         ))}
                       </Grid>
                     )}
-                  </Box>
-                )}
-
-                {/* Molecule Analysis Step */}
-                {activeStep === 2 && (
-                  <Box sx={{ mt: 4 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                      <Typography 
-                        variant="h6" 
-                        sx={{ 
-                          color: '#e879f9',
-                          fontWeight: 600,
-                        }}
-                      >
-                        Drug Molecules
-                      </Typography>
-                      
-                      <Typography variant="body2" color="rgba(255, 255, 255, 0.7)">
-                        Found {drugMolecules.length} molecules for {getSelectedProteinsArray().length} selected proteins
-                      </Typography>
-                    </Box>
-                    
-                    <Box sx={{ mb: 4 }}>
-                      <Typography 
-                        variant="subtitle2" 
-                        color="rgba(255, 255, 255, 0.9)"
-                        sx={{ mb: 1 }}
-                      >
-                        Selected Proteins:
-                      </Typography>
-                      
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {getSelectedProteinsArray().map(protein => (
-                          <Paper 
-                            key={protein.id}
-                            sx={{ 
-                              p: 1, 
-                              background: 'rgba(129, 140, 248, 0.1)',
-                              border: '1px solid rgba(255, 255, 255, 0.1)',
-                              borderRadius: '4px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 1
-                            }}
-                          >
-                            <Typography variant="body2" color="white">
-                              {protein.name}
-                            </Typography>
-                            
-                            {loadingChemblIds[protein.id] && (
-                              <CircularProgress size={16} sx={{ color: '#e879f9' }} />
-                            )}
-                          </Paper>
-                        ))}
-                      </Box>
-                    </Box>
-                    
-                    <Divider sx={{ my: 3, backgroundColor: 'rgba(255, 255, 255, 0.1)' }} />
-                    
-                    {loading ? (
-                      <Box sx={{ textAlign: 'center', py: 8 }}>
-                        <CircularProgress size={60} sx={{ color: '#e879f9', mb: 3 }} />
-                        <Typography variant="h6" color="rgba(255, 255, 255, 0.9)">
-                          Retrieving drug molecules...
-                        </Typography>
-                        <Typography variant="body2" color="rgba(255, 255, 255, 0.6)" sx={{ mt: 1 }}>
-                          This may take a moment as we search multiple databases
-                        </Typography>
-                      </Box>
-                    ) : drugMolecules.length === 0 ? (
-                      <Box sx={{ textAlign: 'center', py: 4 }}>
-                        <Typography variant="body1" color="rgba(255, 255, 255, 0.7)">
-                          No drug molecules found for the selected proteins.
-                        </Typography>
-                        <Typography variant="body2" color="rgba(255, 255, 255, 0.5)" sx={{ mt: 1 }}>
-                          Try selecting different proteins or a different disease.
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Grid container spacing={3}>
-                        {drugMolecules.map((molecule, index) => (
-                          <Grid item xs={12} sm={6} md={4} key={molecule.chembl_id || molecule.molecule_id || molecule.id || index}>
-                            <MoleculeCard 
-                              molecule={molecule}
-                              loading={false}
-                            />
-                          </Grid>
-                        ))}
-                      </Grid>
-                    )}
-                  </Box>
-                )}
-
-                {/* Results Step */}
-                {activeStep === 3 && (
-                  <Box sx={{ mt: 4 }}>
-                    <Typography variant="h6" gutterBottom>
-                      Results
-                    </Typography>
-                    <Typography variant="body1" paragraph>
-                      Your drug discovery analysis is complete. Below are the most promising drug candidates
-                      based on their binding affinity, drug-likeness, and other properties.
-                    </Typography>
-                    <Box sx={{ height: 400 }}>
-                      <Canvas>
-                        <Suspense fallback={null}>
-                          <PerspectiveCamera makeDefault position={[0, 0, 10]} />
-                          <ambientLight intensity={0.5} />
-                          <pointLight position={[10, 10, 10]} />
-                          <Float
-                            speed={4}
-                            rotationIntensity={1}
-                            floatIntensity={2}
-                          >
-                            <MoleculeVisualization />
-                          </Float>
-                          <OrbitControls enableZoom={false} autoRotate />
-                        </Suspense>
-                      </Canvas>
-                    </Box>
-                  </Box>
-                )}
-              </motion.div>
-            </Box>
-
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 3 }}>
+              
+              <Box sx={{ display: 'flex', flexDirection: 'row', pt: 4 }}>
                 <Button 
-                disabled={activeStep === 0}
-                  onClick={handleBack} 
-                variant="outlined"
-                  sx={{ 
-                  color: 'rgba(255, 255, 255, 0.7)',
-                  borderColor: 'rgba(255, 255, 255, 0.2)',
-                    '&:hover': {
-                    borderColor: 'rgba(255, 255, 255, 0.4)',
-                    },
-                  }}
+                  color="inherit"
+                  onClick={handleBack}
+                  sx={{ mr: 1 }}
                 >
                   Back
                 </Button>
+                <Box sx={{ flex: '1 1 auto' }} />
+                <Button 
+                  variant="contained" 
+                  onClick={handleNext}
+                  disabled={Object.values(selectedProteins).some(selected => selected) === false}
+                  sx={{ mr: 1 }}
+                >
+                  Next
+                </Button>
+                  </Box>
+            </motion.div>
+                )}
+
+          {/* Step 3: Molecule Generation */}
+                {activeStep === 2 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
+              <Typography variant="h5" gutterBottom>
+                Generate Molecules
+              </Typography>
+              <Typography variant="body1" color="text.secondary" paragraph>
+                Generate potential drug molecules for the selected proteins.
+                      </Typography>
+                      
+              <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                <Tabs 
+                  value={genTabValue} 
+                  onChange={handleGenTabChange} 
+                  aria-label="molecule generation methods"
+                  textColor="primary"
+                  indicatorColor="primary"
+                >
+                  <Tab label="Potential Drugs Found from Bioassays" {...a11yProps(0)} />
+                  <Tab label="NVIDIA GenMol (AI)" {...a11yProps(1)} />
+                </Tabs>
+              </Box>
+                    
+              {/* Potential Drugs Found from Bioassays */}
+              <TabPanel value={genTabValue} index={0}>
+                    <Box sx={{ mb: 4 }}>
+                  <Typography variant="h6" gutterBottom>
+                    Potential Drug Molecules for Selected Proteins
+                      </Typography>
+                  <Typography variant="body2" color="text.secondary" paragraph>
+                    Select drug molecules to use as seeds for generating new molecules.
+                            </Typography>
+                            
+                  {loadingDrugs ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
+                      <CircularProgress />
+                    </Box>
+                  ) : drugError ? (
+                    <Alert severity="error" sx={{ my: 2 }}>{drugError}</Alert>
+                  ) : proteinDrugs.length === 0 ? (
+                    <Alert severity="info" sx={{ my: 2 }}>
+                      No drug molecules found for the selected proteins. Try selecting different proteins.
+                    </Alert>
+                  ) : (
+                    <>
+                      <Grid container spacing={3} sx={{ mt: 1 }}>
+                        {proteinDrugs.map((drug) => (
+                          <Grid item xs={12} sm={6} md={4} key={drug.id || drug.molecule_id || drug.molecule_chembl_id || ''}>
+                            <Card sx={{ 
+                              height: '100%', 
+                              border: selectedDrugs[drug.id || drug.molecule_id || drug.molecule_chembl_id || ''] 
+                                ? '2px solid #6366f1' 
+                                : '1px solid rgba(255, 255, 255, 0.1)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': {
+                                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+                                transform: 'translateY(-4px)',
+                              },
+                            }}>
+                              <CardContent>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                  <Typography variant="h6" component="div">
+                                    {drug.name || drug.molecule_id || drug.chembl_id || drug.molecule_chembl_id || 'Unknown'}
+                        </Typography>
+                                  <Checkbox 
+                                    checked={!!selectedDrugs[drug.id || drug.molecule_id || drug.molecule_chembl_id || '']}
+                                    onChange={(e) => handleDrugSelect(drug.id || drug.molecule_id || drug.molecule_chembl_id || '', e.target.checked)}
+                                    sx={{
+                                      color: 'rgba(255, 255, 255, 0.6)',
+                                      '&.Mui-checked': {
+                                        color: '#6366f1',
+                                      },
+                                    }}
+                                  />
+                                </Box>
+                                {(drug.chembl_id || drug.molecule_chembl_id) && (
+                                  <Chip 
+                                    label={`ChEMBL: ${drug.chembl_id || drug.molecule_chembl_id}`}
+                                    size="small"
+                                    sx={{ mb: 1 }}
+                                  />
+                                )}
+                                <Box sx={{ bgcolor: 'background.paper', p: 2, borderRadius: 1, mb: 2, overflowX: 'auto' }}>
+                                  <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                                    {drug.smiles || drug.smile}
+                        </Typography>
+                      </Box>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                  {drug.molecular_weight && (
+                                    <Chip size="small" label={`MW: ${Number(drug.molecular_weight).toFixed(2)}`} />
+                                  )}
+                                  {drug.activity_value && (
+                                    <Chip size="small" label={`Activity: ${drug.activity_value} ${drug.activity_type || ''}`} />
+                                  )}
+                                  {drug.mechanism_of_action && (
+                                    <Chip size="small" label={`MOA: ${drug.mechanism_of_action}`} />
+                                  )}
+                      </Box>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        ))}
+                      </Grid>
+                      
+                      <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+                        <Button 
+                          variant="contained" 
+                          color="primary"
+                          onClick={() => {
+                            // Set tab to NVIDIA tab
+                            if (Object.values(selectedDrugs).some(selected => selected)) {
+                              setGenTabValue(1); // Set to NVIDIA GenMol tab 
+                            }
+                          }}
+                          disabled={!Object.values(selectedDrugs).some(selected => selected)}
+                        >
+                          Use Selected as Seed Molecules
+                        </Button>
+                      </Box>
+                    </>
+                )}
+            </Box>
+              </TabPanel>
+              
+              {/* NVIDIA GenMol */}
+              <TabPanel value={genTabValue} index={1}>
+                <NvidiaGenMolGenerator 
+                  initialSmiles={getSelectedDrugSmiles()}
+                  onMoleculesGenerated={handleMoleculesGenerated}
+                />
+              </TabPanel>
+              
+              <Box sx={{ display: 'flex', flexDirection: 'row', pt: 4 }}>
+                <Button 
+                  color="inherit"
+                  onClick={handleBack} 
+                  sx={{ mr: 1 }}
+                >
+                  Back
+                </Button>
+                <Box sx={{ flex: '1 1 auto' }} />
                 <Button
                   variant="contained"
                   onClick={handleNext}
-                disabled={loading || !canProceed()}
-                  sx={{
-                    background: 'linear-gradient(45deg, #818cf8, #e879f9)',
-                  color: 'white',
-                    '&:hover': {
-                    background: 'linear-gradient(45deg, #6366f1, #db2777)',
-                    },
-                    '&.Mui-disabled': {
-                    background: 'rgba(255, 255, 255, 0.12)',
-                    color: 'rgba(255, 255, 255, 0.3)',
-                    },
-                  }}
+                  disabled={generatedMolecules.length === 0}
+                  sx={{ mr: 1 }}
                 >
-                {loading ? (
-                  <CircularProgress size={24} sx={{ color: 'white' }} />
-                ) : (
-                  activeStep === steps.length - 1 ? 'Finish' : 'Next'
-                )}
+                  Next
+                </Button>
+              </Box>
+            </motion.div>
+          )}
+          
+          {/* Step 4: Results */}
+          {activeStep === 3 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
+              <Typography variant="h5" gutterBottom>
+                Results
+              </Typography>
+              <Typography variant="body1" color="text.secondary" paragraph>
+                Review the generated molecules and their properties.
+              </Typography>
+              
+              {generatedMolecules.length > 0 ? (
+                <Grid container spacing={3} sx={{ my: 2 }}>
+                  {generatedMolecules.map((molecule) => (
+                    <Grid item xs={12} sm={6} md={4} key={molecule.id}>
+                      <MoleculeCard 
+                        molecule={convertToDrugMolecule(molecule)} 
+                      />
+                    </Grid>
+                  ))}
+                </Grid>
+              ) : (
+                <Alert severity="info" sx={{ my: 2 }}>
+                  No molecules have been generated yet. Please go back to the molecule generation step.
+                </Alert>
+              )}
+              
+              <Box sx={{ display: 'flex', flexDirection: 'row', pt: 4 }}>
+                <Button 
+                  color="inherit"
+                  onClick={handleBack}
+                  sx={{ mr: 1 }}
+                >
+                  Back
+                </Button>
+                <Box sx={{ flex: '1 1 auto' }} />
+                <Button 
+                  variant="contained" 
+                  onClick={handleReset}
+                  sx={{ mr: 1 }}
+                >
+                  Start Over
                 </Button>
             </Box>
+            </motion.div>
+          )}
           </Paper>
         </Container>
-      </Box>
     </motion.div>
   );
 };

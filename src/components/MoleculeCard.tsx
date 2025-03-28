@@ -23,8 +23,10 @@ interface DrugMolecule {
   id?: string;
   molecule_id?: string;
   chembl_id?: string;
+  molecule_chembl_id?: string;
   name?: string;
-  smiles: string;
+  smiles?: string;
+  smile?: string;
   molecular_formula?: string;
   molecular_weight?: number;
   inchi_key?: string;
@@ -33,6 +35,7 @@ interface DrugMolecule {
   target_name?: string;
   activity_value?: number;
   activity_type?: string;
+  mechanism_of_action?: string;
   _metadata?: Record<string, any>;
 }
 
@@ -74,7 +77,7 @@ const MoleculeCard: React.FC<MoleculeCardProps> = ({
 
   // Function to fetch and display a 2D visualization of the molecule
   const fetchMoleculeImage = async () => {
-    if (!molecule?.smiles) {
+    if (!molecule?.smiles && !molecule?.smile) {
       setImageError(true);
       setImageLoading(false);
       return;
@@ -83,7 +86,7 @@ const MoleculeCard: React.FC<MoleculeCardProps> = ({
     try {
       setImageLoading(true);
       
-      const data = await moleculeApi.visualize2D(molecule.smiles);
+      const data = await moleculeApi.visualize2D(molecule.smiles || molecule.smile || '');
       
       if (data && data.image) {
         setImage(`data:image/png;base64,${data.image}`);
@@ -102,7 +105,8 @@ const MoleculeCard: React.FC<MoleculeCardProps> = ({
   useEffect(() => {
     // Only pre-load images if they have short SMILES strings
     // (complex molecules can slow down the page if loaded all at once)
-    if (molecule?.smiles && molecule.smiles.length < 100) {
+    const smilesString = molecule?.smiles || molecule?.smile || '';
+    if (smilesString && smilesString.length < 100) {
       fetchMoleculeImage();
     }
   }, []);
@@ -240,7 +244,7 @@ const MoleculeCard: React.FC<MoleculeCardProps> = ({
           {molecule.molecular_weight && (
             <Tooltip title="Molecular Weight">
               <Chip 
-                label={`MW: ${formatPropertyValue(molecule.molecular_weight)}`} 
+                label={`MW: ${formatPropertyValue(Number(molecule.molecular_weight))}`} 
                 size="small"
                 sx={{ 
                   background: 'rgba(16, 185, 129, 0.2)',
@@ -271,8 +275,8 @@ const MoleculeCard: React.FC<MoleculeCardProps> = ({
           color="rgba(255, 255, 255, 0.7)"
           sx={{ mb: 1 }}
         >
-          <Tooltip title={molecule.smiles}>
-            <span>SMILES: {truncateText(molecule.smiles, 30)}</span>
+          <Tooltip title={molecule.smiles || molecule.smile}>
+            <span>SMILES: {truncateText(molecule.smiles || molecule.smile, 30)}</span>
           </Tooltip>
         </Typography>
         
@@ -343,7 +347,7 @@ const MoleculeCard: React.FC<MoleculeCardProps> = ({
                   Molecular Weight:
                 </Typography>
                 <Typography variant="body2" color="white">
-                  {formatPropertyValue(molecule.molecular_weight)}
+                  {formatPropertyValue(Number(molecule.molecular_weight))}
                 </Typography>
               </Box>
               {molecule.properties && Object.entries(molecule.properties).map(([key, value]) => (

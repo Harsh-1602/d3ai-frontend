@@ -28,24 +28,28 @@ const features = [
     description: 'Advanced disease prediction through symptom analysis and AI-powered diagnostics',
     icon: <Science fontSize="large" />,
     gradient: 'linear-gradient(135deg, #818cf8 0%, #6366f1 100%)',
+    link: '/drug-discovery'
   },
   {
     title: 'Drug Candidate Search',
     description: 'Comprehensive search through research papers and chemical databases',
     icon: <Search fontSize="large" />,
     gradient: 'linear-gradient(135deg, #e879f9 0%, #d946ef 100%)',
+    link: '/drug-discovery'
   },
   {
     title: 'Property Prediction',
     description: 'Accurate prediction of ADMET properties and molecular characteristics',
     icon: <Analytics fontSize="large" />,
     gradient: 'linear-gradient(135deg, #34d399 0%, #10b981 100%)',
+    link: '/drug-discovery'
   },
   {
     title: 'Molecule Generation',
     description: 'AI-powered generation of novel drug candidates using state-of-the-art models',
     icon: <Biotech fontSize="large" />,
     gradient: 'linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)',
+    link: '/drug-discovery'
   },
 ];
 
@@ -231,91 +235,77 @@ const Home = () => {
             </Typography>
             <Grid container spacing={4}>
               {features.map((feature, index) => (
-                <Grid item key={index} xs={12} sm={6} md={3}>
-                  <motion.div
-                    variants={itemVariants}
-                    whileHover={{ 
-                      scale: 1.05,
-                      transition: { duration: 0.2 }
-                    }}
-                  >
+                <Grid item xs={12} md={6} key={index}>
+                  <motion.div variants={itemVariants}>
                     <Card
+                      elevation={4}
                       sx={{
+                        p: 3,
                         height: '100%',
-                        background: 'rgba(17, 24, 39, 0.6)',
-                        backdropFilter: 'blur(10px)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        background: theme.palette.mode === 'dark' ? 'transparent' : 'white',
+                        border: theme.palette.mode === 'dark' ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                        borderRadius: 2,
                         position: 'relative',
-                        '&::before': {
-                          content: '""',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <Box
+                        sx={{
                           position: 'absolute',
                           top: 0,
                           left: 0,
                           right: 0,
                           height: '4px',
                           background: feature.gradient,
-                        },
-                        transform: 'perspective(1000px) rotateX(0deg)',
-                        transition: 'all 0.6s cubic-bezier(0.23, 1, 0.32, 1)',
-                        '&:hover': {
-                          transform: 'perspective(1000px) rotateX(10deg)',
-                          boxShadow: `0 20px 40px ${feature.gradient.split(' ')[2].slice(0, -2)}15)`,
-                          '& .icon-container': {
-                            transform: 'translateY(-10px)',
-                          },
-                        },
-                      }}
-                    >
-                      <CardContent sx={{ p: 4 }}>
-                        <motion.div
-                          className="icon-container"
-                          whileHover={{ scale: 1.2, rotate: 5 }}
-                          transition={{ duration: 0.3 }}
-                          style={{ transition: 'transform 0.5s ease' }}
-                        >
-                          <Box
-                            sx={{
-                              mb: 3,
-                              display: 'flex',
-                              justifyContent: 'center',
-                              '& > svg': {
-                                fontSize: '3rem',
-                                background: feature.gradient,
-                                WebkitBackgroundClip: 'text',
-                                WebkitTextFillColor: 'transparent',
-                              },
-                            }}
-                          >
-                            {feature.icon}
-                          </Box>
-                        </motion.div>
-                        <Typography
-                          variant="h5"
-                          component="h3"
-                          align="center"
-                          gutterBottom
+                        }}
+                      />
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          mb: 2,
+                        }}
+                      >
+                        <Box
                           sx={{
-                            fontWeight: 600,
-                            mb: 2,
+                            p: 1,
+                            borderRadius: '12px',
                             background: feature.gradient,
-                            WebkitBackgroundClip: 'text',
-                            WebkitTextFillColor: 'transparent',
+                            mr: 2,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
                           }}
                         >
+                          {feature.icon}
+                        </Box>
+                        <Typography variant="h5" component="h3">
                           {feature.title}
                         </Typography>
-                        <Typography
-                          align="center"
-                          sx={{
-                            color: 'rgba(255, 255, 255, 0.7)',
-                            fontSize: '0.95rem',
-                            lineHeight: 1.7,
-                          }}
-                        >
-                          {feature.description}
-                        </Typography>
-                      </CardContent>
+                      </Box>
+                      <Typography variant="body1" sx={{ mb: 3, flexGrow: 1 }}>
+                        {feature.description}
+                      </Typography>
+                      <Button
+                        component={RouterLink}
+                        to={feature.link}
+                        variant="outlined"
+                        color="primary"
+                        sx={{
+                          alignSelf: 'flex-start',
+                          borderRadius: '20px',
+                          px: 3,
+                          '&:hover': {
+                            background: feature.gradient,
+                            color: 'white',
+                            borderColor: 'transparent',
+                          },
+                        }}
+                      >
+                        Explore
+                      </Button>
                     </Card>
                   </motion.div>
                 </Grid>

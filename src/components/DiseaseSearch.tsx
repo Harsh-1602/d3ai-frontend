@@ -8,13 +8,13 @@ import {
 import { debounce } from 'lodash';
 import { diseaseApi } from '../utils/api';
 
-interface DiseaseSuggestion {
+export interface DiseaseSuggestion {
   id: string;
   name: string;
   aliases?: string[];
 }
 
-interface DiseaseSearchProps {
+export interface DiseaseSearchProps {
   onDiseaseSelect: (disease: DiseaseSuggestion) => void;
   label?: string;
   placeholder?: string;
