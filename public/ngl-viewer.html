@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>NGL Protein Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/ngl@0.10.4/dist/ngl.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #141824;
+        }
+        #viewport {
+            width: 100%;
+            height: 100vh;
+            display: block;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: sans-serif;
+            font-size: 18px;
+            text-align: center;
+        }
+        .loading-spinner {
+            border: 5px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 5px solid #e879f9;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+            font-family: sans-serif;
+            font-size: 13px;
+        }
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4d4d;
+            font-family: sans-serif;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        .data-source {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+            font-family: sans-serif;
+            font-size: 13px;
+        }
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #4f46e5;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport"></div>
+    <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <div id="loading-message">Initializing viewer...</div>
+    </div>
+    <div id="error" class="error" style="display: none;">
+        <div id="error-message"></div>
+        <button id="try-alternative">Try Different Data Source</button>
+    </div>
+    <div id="controls" class="controls" style="display: none;">
+        Tip: Click and drag to rotate. Scroll to zoom.
+    </div>
+    <div id="data-source" class="data-source" style="display: none;">
+        Data source: <span id="source-name">RCSB Direct</span>
+    </div>
+
+    <script>
+        // Global variables
+        let stage = null;
+        let structureComponent = null;
+        let pdbId = '';
+        let isLoading = true;
+        
+        // Available data sources with explicit extensions - RCSB Direct first as it works best
+        const dataSources = [
+            {id: 'direct-pdb', name: 'RCSB Direct', url: 'https://files.rcsb.org/download/{id}.pdb', ext: 'pdb'},
+            {id: 'pdbe-ent', name: 'PDBe (ent)', url: 'https://www.ebi.ac.uk/pdbe/entry-files/pdb{id}.ent', ext: 'pdb'},
+            {id: 'pdbe-cif', name: 'PDBe (cif)', url: 'https://www.ebi.ac.uk/pdbe/entry-files/download/{id}.cif', ext: 'cif'},
+            {id: 'rcsb-pdb', name: 'RCSB PDB', url: 'rcsb://{id}', ext: 'pdb'}
+        ];
+        
+        let currentSourceIndex = 0;
+        const representationStyles = ['cartoon', 'backbone', 'ball+stick', 'spacefill', 'licorice', 'surface'];
+        let currentStyleIndex = 0;
+        let loadingTimeout = null;
+        
+        // Show/hide UI elements
+        function setLoading(loading, message = null) {
+            isLoading = loading;
+            // Only show internal loading if it's the initial load, otherwise let React handle it
+            const isInitialLoad = !document.getElementById('viewport').hasChildNodes();
+            document.getElementById('loading').style.display = (loading && isInitialLoad) ? 'block' : 'none';
+            
+            if (message) {
+                document.getElementById('loading-message').textContent = message;
+            }
+            
+            // Signal to parent that loading state changed
+            window.parent.postMessage({ 
+                type: loading ? 'loadingStarted' : 'loadingComplete',
+                message: message
+            }, '*');
+            
+            // Set timeout for auto-retry if loading takes too long
+            if (loading) {
+                if (loadingTimeout) clearTimeout(loadingTimeout);
+                loadingTimeout = setTimeout(() => {
+                    if (isLoading) {
+                        console.log("Loading timeout reached, trying next source");
+                        tryNextDataSource();
+                    }
+                }, 10000); // 10 seconds timeout
+            } else {
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                    loadingTimeout = null;
+                }
+            }
+        }
+        
+        function showError(message) {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error-message').textContent = message;
+            setLoading(false);
+            
+            // Signal to parent that there was an error
+            window.parent.postMessage({ 
+                type: 'error',
+                message: message
+            }, '*');
+        }
+        
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+        
+        function showControls() {
+            document.getElementById('controls').style.display = 'block';
+            document.getElementById('data-source').style.display = 'block';
+            document.getElementById('source-name').textContent = dataSources[currentSourceIndex].name;
+            
+            // Notify parent about source change
+            window.parent.postMessage({ 
+                type: 'sourceChanged', 
+                sourceName: dataSources[currentSourceIndex].name,
+                sourceIndex: currentSourceIndex
+            }, '*');
+        }
+        
+        // Clean up previous structure
+        function cleanUpStructure() {
+            if (structureComponent && stage) {
+                try {
+                    stage.removeComponent(structureComponent);
+                } catch (e) {
+                    console.warn("Error removing component:", e);
+                }
+                structureComponent = null;
+            }
+        }
+        
+        // Add a representation with error handling
+        async function addRepresentation(structure, style) {
+            if (!structure) return false;
+            
+            try {
+                // Add a simple representation based on style
+                structure.addRepresentation(style);
+                return true;
+            } catch (error) {
+                console.warn(`Failed to add ${style} representation:`, error);
+                return false;
+            }
+        }
+        
+        // Try loading with the next data source
+        async function tryNextDataSource() {
+            const previousIndex = currentSourceIndex;
+            currentSourceIndex = (currentSourceIndex + 1) % dataSources.length;
+            
+            // If we've tried all sources, show error and stop
+            if (currentSourceIndex === previousIndex) {
+                showError("Failed to load protein structure from all available sources");
+                return;
+            }
+            
+            // Notify parent about source change
+            window.parent.postMessage({ 
+                type: 'sourceChanged', 
+                sourceName: dataSources[currentSourceIndex].name,
+                sourceIndex: currentSourceIndex
+            }, '*');
+            
+            loadStructure(pdbId, dataSources[currentSourceIndex]);
+        }
+        
+        // Try the next representation style
+        async function tryNextStyle() {
+            if (!structureComponent) return;
+            
+            try {
+                // Remove all existing representations
+                structureComponent.removeAllRepresentations();
+                
+                // Try next style
+                currentStyleIndex = (currentStyleIndex + 1) % representationStyles.length;
+                const style = representationStyles[currentStyleIndex];
+                
+                const success = await addRepresentation(structureComponent, style);
+                if (success) {
+                    stage.autoView();
+                    const styleName = `${dataSources[currentSourceIndex].name} (${style})`;
+                    document.getElementById('source-name').textContent = styleName;
+                    
+                    // Notify parent about style change
+                    window.parent.postMessage({ 
+                        type: 'styleChanged', 
+                        style: style
+                    }, '*');
+                } else {
+                    showError(`Failed to apply ${style} style. Try another data source.`);
+                }
+            } catch (error) {
+                console.error("Error changing style:", error);
+                showError("Failed to change style. Try another data source.");
+            }
+        }
+        
+        // Standard method to load a protein from a URL
+        async function loadFromUrl(url, fileExt) {
+            if (!stage) throw new Error("NGL Stage not initialized");
+            
+            console.log(`Loading from URL: ${url} with extension: ${fileExt}`);
+            
+            // Make sure we have a valid extension
+            if (!fileExt) {
+                throw new Error("File extension must be specified");
+            }
+            
+            return stage.loadFile(url, { ext: fileExt })
+                .catch(error => {
+                    console.error(`Failed to load from ${url}:`, error);
+                    return null;
+                });
+        }
+        
+        // Main function to load a structure
+        async function loadStructure(id, sourceConfig = dataSources[0]) {
+            pdbId = id.toLowerCase();
+            hideError();
+            
+            // Format a clean loading message
+            const loadingMessage = `Loading protein structure ${id.toUpperCase()} from ${sourceConfig.name}...`;
+            setLoading(true, loadingMessage);
+            
+            try {
+                // Clean up previous structure
+                cleanUpStructure();
+                
+                // Replace id in URL template
+                const url = sourceConfig.url.replace('{id}', pdbId);
+                const fileExt = sourceConfig.ext;
+                
+                // Load the structure with timeout handling
+                const loadPromise = loadFromUrl(url, fileExt);
+                
+                structureComponent = await loadPromise;
+                
+                if (structureComponent) {
+                    // Try to add the default cartoon representation
+                    const success = await addRepresentation(structureComponent, 'cartoon');
+                    
+                    if (success) {
+                        // Successfully loaded and displayed
+                        stage.autoView();
+                        setLoading(false);
+                        showControls();
+                    } else {
+                        // Try a different style
+                        for (const style of representationStyles) {
+                            if (style !== 'cartoon') {
+                                const altSuccess = await addRepresentation(structureComponent, style);
+                                if (altSuccess) {
+                                    stage.autoView();
+                                    setLoading(false);
+                                    showControls();
+                                    currentStyleIndex = representationStyles.indexOf(style);
+                                    document.getElementById('source-name').textContent = 
+                                        `${sourceConfig.name} (${style})`;
+                                    return;
+                                }
+                            }
+                        }
+                        
+                        showError("Failed to render structure. Try a different data source.");
+                    }
+                } else {
+                    console.log(`Failed to load from ${sourceConfig.name}, trying next source`);
+                    tryNextDataSource();
+                }
+            } catch (error) {
+                console.error("Error loading structure:", error);
+                showError(`Error: ${error.message || 'Failed to load structure'}`);
+            }
+        }
+        
+        // Initialize NGL Stage
+        function initNGL() {
+            try {
+                // Create NGL Stage object
+                stage = new NGL.Stage('viewport', { 
+                    backgroundColor: '#141824'
+                });
+                
+                console.log('NGL stage created successfully');
+                
+                // Listen for window resize events
+                window.addEventListener('resize', () => {
+                    if (stage) stage.handleResize();
+                });
+                
+                // Add event listeners for buttons
+                document.getElementById('try-alternative').addEventListener('click', tryNextDataSource);
+                
+                // Listen for messages from parent window (React)
+                window.addEventListener('message', function(event) {
+                    const data = event.data;
+                    
+                    if (data.type === 'loadStructure') {
+                        const pdbId = data.pdbId;
+                        const sourceIndex = data.sourceIndex !== undefined ? data.sourceIndex : 0;
+                        loadStructure(pdbId, dataSources[sourceIndex]);
+                    } else if (data.type === 'changeStyle') {
+                        tryNextStyle();
+                    } else if (data.type === 'changeDataSource') {
+                        tryNextDataSource();
+                    }
+                });
+                
+                // Hide initial loading message now that initialization is complete
+                document.getElementById('loading').style.display = 'none';
+                
+                // Signal that the viewer is ready
+                window.parent.postMessage({ type: 'viewerReady' }, '*');
+                
+            } catch (error) {
+                console.error("Failed to initialize NGL:", error);
+                showError(`Failed to initialize 3D viewer: ${error.message || 'Unknown error'}`);
+            }
+        }
+        
+        // Initialize when the page loads
+        window.onload = initNGL;
+    </script>
+</body>
+</html> 
