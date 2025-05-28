@@ -19,17 +19,33 @@ import {
   CardContent,
   Checkbox,
   Chip,
+  FormControlLabel,
+  Radio,
+  RadioGroup,
+  FormControl,
+  FormLabel,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton
 } from '@mui/material';
 import { motion } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Float } from '@react-three/drei';
 import DiseaseSearch, { DiseaseSuggestion, DiseaseSearchProps } from '../components/DiseaseSearch';
-import ProteinCard, { Protein, ProteinCardProps } from '../components/ProteinCard';
+import ProteinCard, { Protein as BaseProtein, ProteinCardProps } from '../components/ProteinCard';
 import MoleculeCard from '../components/MoleculeCard';
 import MoleculeVisualization from '../components/MoleculeVisualization';
 import MoleculeGenerator from '../components/MoleculeGeneration/MoleculeGenerator';
 import NvidiaGenMolGenerator from '../components/MoleculeGeneration/NvidiaGenMolGenerator';
-import { proteinApi, moleculeApi, Molecule } from '../utils/api';
+import DockingVisualization from '../components/DockingVisualization';
+import { proteinApi, moleculeApi, dockingApi, Molecule } from '../utils/api';
+import CloseIcon from '@mui/icons-material/Close';
+
+// Extend the Protein interface to include gene_name property
+interface Protein extends BaseProtein {
+  gene_name?: string;
+}
 
 // Import or define the DrugMolecule interface
 interface DrugMolecule {
@@ -133,6 +149,24 @@ const DrugDiscovery = () => {
   const [selectedDrugs, setSelectedDrugs] = useState<{[id: string]: boolean}>({});
   const [loadingDrugs, setLoadingDrugs] = useState(false);
   const [drugError, setDrugError] = useState<string | null>(null);
+  
+  // New state for docking
+  const [selectedDockingProtein, setSelectedDockingProtein] = useState<string | null>(null);
+  const [selectedDockingMolecule, setSelectedDockingMolecule] = useState<string | null>(null);
+  const [isDockingLoading, setIsDockingLoading] = useState(false);
+  const [dockingError, setDockingError] = useState<string | null>(null);
+  const [dockingResult, setDockingResult] = useState<{
+    ligand_positions: string[],
+    position_confidence: number[],
+    status: string,
+    message?: string
+  } | null>(null);
+  const [dockingVisualization, setDockingVisualization] = useState<string | null>(null);
+  const [dockingModalOpen, setDockingModalOpen] = useState(false);
+  
+  // Add this state to track proteins with their PDB IDs
+  const [proteinPdbMap, setProteinPdbMap] = useState<{[id: string]: string}>({});
+  
   const theme = useTheme();
 
   const handleNext = () => {
@@ -316,6 +350,227 @@ const DrugDiscovery = () => {
       // This will be handled by the component prop
     }
   };
+
+  // New handler for protein selection for docking
+  const handleDockingProteinSelect = (proteinId: string) => {
+    setSelectedDockingProtein(proteinId === selectedDockingProtein ? null : proteinId);
+  };
+
+  // New handler for molecule selection for docking
+  const handleDockingMoleculeSelect = (moleculeId: string) => {
+    setSelectedDockingMolecule(moleculeId === selectedDockingMolecule ? null : moleculeId);
+  };
+
+  // Function to get the selected protein object
+  const getSelectedProtein = (): Protein | null => {
+    if (!selectedDockingProtein) return null;
+    const protein = proteins.find(protein => protein.id === selectedDockingProtein) || null;
+    
+    if (protein && !protein.pdb_id && proteinPdbMap[protein.id]) {
+      // Create a new protein object with the PDB ID from our map
+      return {
+        ...protein,
+        pdb_id: proteinPdbMap[protein.id]
+      };
+    }
+    
+    return protein;
+  };
+
+  // Function to get the selected molecule object (either from generated molecules or protein drugs)
+  const getSelectedMolecule = (): Molecule | DrugMolecule | null => {
+    if (!selectedDockingMolecule) return null;
+    
+    // Check in generated molecules
+    const genMolecule = generatedMolecules.find(mol => mol.id === selectedDockingMolecule);
+    if (genMolecule) return genMolecule;
+    
+    // Check in protein drugs
+    return proteinDrugs.find(drug => 
+      drug.id === selectedDockingMolecule || 
+      drug.molecule_id === selectedDockingMolecule || 
+      drug.molecule_chembl_id === selectedDockingMolecule
+    ) || null;
+  };
+
+  // Function to perform molecular docking
+  const performDocking = async (): Promise<void> => {
+    const protein = getSelectedProtein();
+    const molecule = getSelectedMolecule();
+    
+    if (!protein || !molecule) {
+      setDockingError('Please select both a protein and a molecule for docking.');
+      return;
+    }
+    
+    // Check if the protein has a valid PDB ID (either directly or from external references)
+    const effectivePdbId = protein.pdb_id || proteinPdbMap[protein.id];
+    if (!effectivePdbId) {
+      setDockingError('The selected protein does not have a PDB ID. Please select a different protein with a valid PDB ID.');
+      return;
+    }
+    
+    // Get the SMILES string for the selected molecule
+    const smiles = 'smile' in molecule 
+      ? molecule.smile
+      : molecule.smiles || null;
+    
+    if (!smiles) {
+      setDockingError('Selected molecule does not have a valid SMILES string.');
+      return;
+    }
+    
+    setIsDockingLoading(true);
+    setDockingError(null);
+    setDockingResult(null);
+    setDockingVisualization(null);
+    setDockingModalOpen(false);
+    
+    try {
+      // Get protein PDB data using the protein's PDB ID
+      const proteinPDB = await fetchProteinPDB(protein);
+      
+      if (!proteinPDB) {
+        throw new Error(`Failed to fetch protein PDB data for ${protein.name} (PDB ID: ${effectivePdbId}).`);
+      }
+      
+      console.log(`Docking request - Protein: ${protein.name} (PDB ID: ${effectivePdbId})`);
+      console.log('Docking request - Protein data length:', proteinPDB.length);
+      console.log('Docking request - SMILES:', smiles);
+      
+      // Call docking API - the backend will convert SMILES to SDF
+      const result = await dockingApi.dock({
+        protein: proteinPDB,
+        ligand: smiles,
+        ligand_file_type: 'smiles', // Backend will convert this to SDF
+        num_poses: 2,
+        time_divisions: 20,
+        steps: 18,
+        save_trajectory: false
+      });
+      
+      console.log('Docking result:', result);
+      setDockingResult(result);
+      
+      // Get visualization HTML
+      if (result.ligand_positions && result.ligand_positions.length > 0) {
+        try {
+          const visualization = await dockingApi.getDockingVisualization({
+            protein: proteinPDB,
+            ligand_poses: result.ligand_positions,
+            confidence_scores: result.position_confidence
+          });
+          
+          setDockingVisualization(visualization.viewer_html);
+          // Open modal to show results
+          setDockingModalOpen(true);
+        } catch (vizError) {
+          console.error('Error getting visualization:', vizError);
+          setDockingError('Docking completed, but visualization failed to load.');
+        }
+      }
+    } catch (error) {
+      console.error('Docking error:', error);
+      setDockingError('Error performing molecular docking. Please try again.');
+    } finally {
+      setIsDockingLoading(false);
+    }
+  };
+  
+  // Helper function to fetch protein PDB without processing it
+  const fetchProteinPDB = async (protein: Protein): Promise<string> => {
+    try {
+      // Get the PDB ID - either directly from the protein or from our external references map
+      const pdbId = protein.pdb_id || proteinPdbMap[protein.id];
+      
+      // Validate that we have a PDB ID
+      if (!pdbId) {
+        // If protein has a UniProt ID but we don't have a PDB ID yet, try fetching it on-demand
+        if (protein.uniprot_id && Object.keys(proteinPdbMap).length === 0) {
+          console.log(`Attempting to fetch external references for ${protein.uniprot_id} on demand`);
+          try {
+            const externalRefs = await proteinApi.getProteinExternalLinks(protein.uniprot_id);
+            if (externalRefs && externalRefs.PDB) {
+              // Update our map with the new PDB ID
+              setProteinPdbMap(prev => ({
+                ...prev,
+                [protein.id]: externalRefs.PDB
+              }));
+              console.log(`Found PDB ID on demand: ${externalRefs.PDB}`);
+              
+              // Use this PDB ID
+              return fetchProteinPDBById(externalRefs.PDB);
+            }
+          } catch (error) {
+            console.error(`Error fetching external references on demand:`, error);
+          }
+        }
+        
+        throw new Error('No PDB ID available for this protein');
+      }
+      
+      return fetchProteinPDBById(pdbId);
+    } catch (error) {
+      console.error('Error fetching protein PDB:', error);
+      throw error;
+    }
+  };
+  
+  // Helper function to fetch PDB structure by ID
+  const fetchProteinPDBById = async (pdbId: string): Promise<string> => {
+    const pdbUrl = `https://files.rcsb.org/download/${pdbId}.pdb`;
+    console.log(`Fetching PDB from: ${pdbUrl}`);
+    
+    const response = await fetch(pdbUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch PDB for ${pdbId}: ${response.statusText}`);
+    }
+    
+    // Return the raw PDB text without filtering
+    return await response.text();
+  };
+
+  // Add this function to fetch PDB IDs for proteins with UniProt IDs
+  const fetchProteinPdbIds = async (proteins: Protein[]) => {
+    const proteinsWithUniprotIds = proteins.filter(p => p.uniprot_id);
+    
+    if (proteinsWithUniprotIds.length === 0) {
+      console.log('No proteins with UniProt IDs found');
+      return;
+    }
+    
+    console.log(`Fetching external references for ${proteinsWithUniprotIds.length} proteins`);
+    
+    // Fetch PDB IDs for each protein with a UniProt ID
+    const pdbMap: {[id: string]: string} = {};
+    
+    await Promise.all(
+      proteinsWithUniprotIds.map(async (protein) => {
+        try {
+          console.log(`Fetching external references for UniProt ID: ${protein.uniprot_id}`);
+          const externalRefs = await proteinApi.getProteinExternalLinks(protein.uniprot_id || '');
+          
+          // Check if there's a PDB ID in the external references
+          if (externalRefs && externalRefs.PDB) {
+            console.log(`Found PDB ID for ${protein.name}: ${externalRefs.PDB}`);
+            pdbMap[protein.id] = externalRefs.PDB;
+          }
+        } catch (error) {
+          console.error(`Error fetching external references for ${protein.uniprot_id}:`, error);
+        }
+      })
+    );
+    
+    setProteinPdbMap(pdbMap);
+  };
+  
+  // Call this function when proteins are loaded
+  useEffect(() => {
+    if (proteins.length > 0) {
+      fetchProteinPdbIds(proteins);
+    }
+  }, [proteins]);
 
   return (
     <motion.div
@@ -591,7 +846,7 @@ const DrugDiscovery = () => {
             </motion.div>
           )}
           
-          {/* Step 4: Results */}
+          {/* Step 4: Results and Docking */}
           {activeStep === 3 && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -599,25 +854,389 @@ const DrugDiscovery = () => {
               transition={{ duration: 0.5 }}
             >
               <Typography variant="h5" gutterBottom>
-                Results
+                Results and Docking
               </Typography>
               <Typography variant="body1" color="text.secondary" paragraph>
-                Review the generated molecules and their properties.
+                Select one protein and one molecule, then click "Dock" to perform molecular docking and view the results.
               </Typography>
               
-              {generatedMolecules.length > 0 ? (
-                <Grid container spacing={3} sx={{ my: 2 }}>
-                  {generatedMolecules.map((molecule) => (
-                    <Grid item xs={12} sm={6} md={4} key={molecule.id}>
-                      <MoleculeCard 
-                        molecule={convertToDrugMolecule(molecule)} 
-                      />
-                    </Grid>
-                  ))}
+              <Grid container spacing={4}>
+                {/* Left column: Protein selection */}
+                <Grid item xs={12} md={6}>
+                  <Paper elevation={2} sx={{ p: 3, mb: 3, height: '100%' }}>
+                    <Typography variant="h6" gutterBottom>
+                      Select Target Protein
+                    </Typography>
+                    
+                    {/* Loading indicator while fetching PDB IDs */}
+                    {proteins.filter(p => selectedProteins[p.id]).length > 0 && 
+                     Object.keys(proteinPdbMap).length === 0 && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                        <CircularProgress size={20} sx={{ mr: 1 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          Fetching PDB IDs from UniProt external references...
+                        </Typography>
+                      </Box>
+                    )}
+                    
+                    <RadioGroup 
+                      value={selectedDockingProtein || ''}
+                      onChange={(e) => handleDockingProteinSelect(e.target.value)}
+                    >
+                      {proteins.filter(p => selectedProteins[p.id]).map((protein) => {
+                        // Check if we have a PDB ID in our map
+                        const hasPdbFromApi = !!proteinPdbMap[protein.id];
+                        const pdbId = protein.pdb_id || (hasPdbFromApi ? proteinPdbMap[protein.id] : null);
+                        const canBeUsedForDocking = !!pdbId;
+                        
+                        return (
+                          <FormControlLabel
+                            key={protein.id}
+                            value={protein.id}
+                            control={<Radio disabled={!canBeUsedForDocking} />}
+                            label={
+                              <Box>
+                                <Typography variant="body1">
+                                  {protein.name || protein.gene_name || protein.id}
+                                </Typography>
+                                {protein.uniprot_id && (
+                                  <Typography variant="body2" color="text.secondary">
+                                    UniProt: {protein.uniprot_id}
+                                  </Typography>
+                                )}
+                                {pdbId ? (
+                                  <Typography variant="body2" color="text.secondary">
+                                    PDB ID: {pdbId} {hasPdbFromApi && "(from UniProt references)"}
+                                  </Typography>
+                                ) : protein.uniprot_id && Object.keys(proteinPdbMap).length === 0 ? (
+                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <CircularProgress size={14} sx={{ mr: 1 }} />
+                                    <Typography variant="body2" color="text.secondary">
+                                      Checking for PDB ID...
+                                    </Typography>
+                                  </Box>
+                                ) : (
+                                  <Typography variant="body2" color="error">
+                                    No PDB ID available (cannot be used for docking)
+                                  </Typography>
+                                )}
+                              </Box>
+                            }
+                            sx={{
+                              p: 1, 
+                              my: 1, 
+                              border: '1px solid',
+                              borderColor: selectedDockingProtein === protein.id ? 'primary.main' : 'divider',
+                              borderRadius: 1,
+                              width: '100%',
+                              bgcolor: selectedDockingProtein === protein.id ? 'action.selected' : 'transparent',
+                              opacity: !canBeUsedForDocking ? 0.6 : 1
+                            }}
+                          />
+                        );
+                      })}
+                    </RadioGroup>
+                    
+                    {proteins.filter(p => selectedProteins[p.id]).length === 0 && (
+                      <Alert severity="info" sx={{ mt: 2 }}>
+                        No proteins selected. Please go back to the protein selection step.
+                      </Alert>
+                    )}
+                    
+                    {proteins.filter(p => selectedProteins[p.id]).length > 0 && 
+                     Object.keys(proteinPdbMap).length > 0 &&
+                     proteins.filter(p => selectedProteins[p.id] && (p.pdb_id || proteinPdbMap[p.id])).length === 0 && (
+                      <Alert severity="warning" sx={{ mt: 2 }}>
+                        None of the selected proteins have a PDB ID available, which is required for docking.
+                        Please go back and select proteins with UniProt IDs that have associated PDB structures.
+                      </Alert>
+                    )}
+                  </Paper>
                 </Grid>
-              ) : (
-                <Alert severity="info" sx={{ my: 2 }}>
-                  No molecules have been generated yet. Please go back to the molecule generation step.
+                
+                {/* Right column: Molecule selection */}
+                <Grid item xs={12} md={6}>
+                  <Paper elevation={2} sx={{ p: 3, mb: 3, height: '100%' }}>
+                    <Typography variant="h6" gutterBottom>
+                      Select Molecule
+                    </Typography>
+                    
+                    {/* Tab for switching between generated molecules and seed molecules */}
+                    <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+                      <Tabs value={genTabValue} onChange={handleGenTabChange}>
+                        <Tab label="Generated Molecules" {...a11yProps(0)} />
+                        <Tab label="Seed Molecules" {...a11yProps(1)} />
+                      </Tabs>
+                    </Box>
+                    
+                    {/* Generated molecules tab */}
+                    <TabPanel value={genTabValue} index={0}>
+                      <RadioGroup 
+                        value={selectedDockingMolecule || ''}
+                        onChange={(e) => handleDockingMoleculeSelect(e.target.value)}
+                      >
+                  {generatedMolecules.map((molecule) => (
+                          <FormControlLabel
+                            key={molecule.id}
+                            value={molecule.id}
+                            control={<Radio />}
+                            label={
+                              <Box>
+                                <Typography variant="body1">
+                                  {molecule.name || `Molecule ${molecule.id}`}
+                                </Typography>
+                                <Typography 
+                                  variant="body2" 
+                                  color="text.secondary"
+                                  sx={{ 
+                                    fontFamily: 'monospace', 
+                                    fontSize: '0.8rem',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    maxWidth: '100%'
+                                  }}
+                                >
+                                  {molecule.smile}
+                                </Typography>
+                              </Box>
+                            }
+                            sx={{
+                              p: 1, 
+                              my: 1, 
+                              border: '1px solid',
+                              borderColor: selectedDockingMolecule === molecule.id ? 'primary.main' : 'divider',
+                              borderRadius: 1,
+                              width: '100%',
+                              bgcolor: selectedDockingMolecule === molecule.id ? 'action.selected' : 'transparent'
+                            }}
+                          />
+                        ))}
+                      </RadioGroup>
+                      
+                      {generatedMolecules.length === 0 && (
+                        <Alert severity="info">
+                          No generated molecules available. Please go back to generate molecules.
+                        </Alert>
+                      )}
+                    </TabPanel>
+                    
+                    {/* Seed molecules tab */}
+                    <TabPanel value={genTabValue} index={1}>
+                      <RadioGroup 
+                        value={selectedDockingMolecule || ''}
+                        onChange={(e) => handleDockingMoleculeSelect(e.target.value)}
+                      >
+                        {proteinDrugs.map((drug) => {
+                          const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+                          return (
+                            <FormControlLabel
+                              key={drugId}
+                              value={drugId}
+                              control={<Radio />}
+                              label={
+                                <Box>
+                                  <Typography variant="body1">
+                                    {drug.name || drug.molecule_id || drug.chembl_id || 'Unknown'}
+                                  </Typography>
+                                  <Typography 
+                                    variant="body2" 
+                                    color="text.secondary"
+                                    sx={{ 
+                                      fontFamily: 'monospace', 
+                                      fontSize: '0.8rem',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      maxWidth: '100%'
+                                    }}
+                                  >
+                                    {drug.smiles || drug.smile || ''}
+                                  </Typography>
+                                </Box>
+                              }
+                              sx={{
+                                p: 1, 
+                                my: 1, 
+                                border: '1px solid',
+                                borderColor: selectedDockingMolecule === drugId ? 'primary.main' : 'divider',
+                                borderRadius: 1,
+                                width: '100%',
+                                bgcolor: selectedDockingMolecule === drugId ? 'action.selected' : 'transparent'
+                              }}
+                            />
+                          );
+                        })}
+                      </RadioGroup>
+                      
+                      {proteinDrugs.length === 0 && (
+                        <Alert severity="info">
+                          No seed molecules available. Please go back to select drugs.
+                        </Alert>
+                      )}
+                    </TabPanel>
+                  </Paper>
+                  
+                  {/* Docking button */}
+                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="large"
+                      onClick={performDocking}
+                      disabled={!selectedDockingProtein || !selectedDockingMolecule || isDockingLoading}
+                      startIcon={isDockingLoading ? <CircularProgress size={24} color="inherit" /> : null}
+                      sx={{ 
+                        py: 1.5, 
+                        px: 4, 
+                        borderRadius: 2,
+                        boxShadow: theme.shadows[5]
+                      }}
+                    >
+                      {isDockingLoading ? 'Docking...' : 'Dock Selected Molecules'}
+                    </Button>
+                  </Box>
+                    </Grid>
+              </Grid>
+              
+              {/* Docking results modal */}
+              {dockingResult && (
+                <Dialog
+                  open={dockingModalOpen}
+                  onClose={() => setDockingModalOpen(false)}
+                  maxWidth="lg"
+                  fullWidth
+                  PaperProps={{
+                    sx: {
+                      borderRadius: 2,
+                      height: '90vh',
+                      maxHeight: '90vh'
+                    }
+                  }}
+                >
+                  <DialogTitle sx={{ 
+                    m: 0, 
+                    p: 2, 
+                    display: 'flex', 
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: 'linear-gradient(45deg, #6366f1, #8b5cf6)',
+                    color: 'white'
+                  }}>
+                    <Box>
+                      <Typography variant="h6" component="div">
+                        Docking Results
+                      </Typography>
+                      {getSelectedProtein() && (
+                        <Typography variant="subtitle2" component="div">
+                          {getSelectedProtein()?.name} (PDB ID: {getSelectedProtein()?.pdb_id})
+                        </Typography>
+                      )}
+                    </Box>
+                    <IconButton
+                      aria-label="close"
+                      onClick={() => setDockingModalOpen(false)}
+                      sx={{ color: 'white' }}
+                    >
+                      <CloseIcon />
+                    </IconButton>
+                  </DialogTitle>
+                  <DialogContent dividers sx={{ p: 2, height: '100%', overflow: 'auto' }}>
+                    <Grid container spacing={3}>
+                      <Grid item xs={12}>
+                        <Box sx={{ position: 'relative', width: '100%', borderRadius: 2, overflow: 'hidden' }}>
+                          <DockingVisualization
+                            viewerHtml={dockingVisualization}
+                            isLoading={isDockingLoading}
+                            error={dockingError}
+                            height="600px"
+                          />
+                          
+                          {/* Confidence score legend */}
+                          <Box sx={{ 
+                            position: 'absolute', 
+                            top: 16, 
+                            right: 16, 
+                            p: 1.5, 
+                            backgroundColor: 'rgba(0,0,0,0.7)', 
+                            borderRadius: 1,
+                            color: 'white'
+                          }}>
+                            <Typography variant="subtitle2" sx={{ mb: 1 }}>Confidence Scores:</Typography>
+                            {dockingResult.position_confidence.map((confidence, index) => (
+                              <Box key={index} sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                                <Box sx={{ 
+                                  width: 12, 
+                                  height: 12, 
+                                  borderRadius: '50%', 
+                                  mr: 1,
+                                  bgcolor: index === 0 ? '#4CAF50' : '#FFC107'
+                                }} />
+                                <Typography variant="caption">
+                                  Pose {index + 1}: {confidence.toFixed(2)}
+                                </Typography>
+                              </Box>
+                            ))}
+                          </Box>
+                        </Box>
+                </Grid>
+                      
+                      {dockingResult.ligand_positions && dockingResult.ligand_positions.length > 0 && (
+                        <Grid item xs={12}>
+                          <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
+                            Docking Poses
+                          </Typography>
+                          
+                          <Grid container spacing={2}>
+                            {dockingResult.position_confidence.map((confidence, index) => (
+                              <Grid item key={index} xs={12} sm={6} md={4}>
+                                <Paper 
+                                  sx={{ 
+                                    p: 2, 
+                                    bgcolor: 'background.paper',
+                                    border: '1px solid',
+                                    borderColor: index === 0 ? '#4CAF50' : '#FFC107',
+                                    borderLeft: '4px solid',
+                                    borderLeftColor: index === 0 ? '#4CAF50' : '#FFC107',
+                                  }}
+                                >
+                                  <Typography variant="subtitle1" fontWeight="bold">
+                                    Pose {index + 1}
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Confidence Score: {confidence.toFixed(2)}
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                    {index === 0 ? 'Best binding pose (highest confidence)' : 'Alternative binding pose'}
+                                  </Typography>
+                                </Paper>
+                              </Grid>
+                            ))}
+                          </Grid>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </DialogContent>
+                </Dialog>
+              )}
+              
+              {/* Docking error display outside modal */}
+              {dockingError && !dockingModalOpen && (
+                <Alert severity="error" sx={{ mt: 4 }}>
+                  {dockingError}
+                </Alert>
+              )}
+              
+              {/* Success message when docking results are available but modal is closed */}
+              {dockingResult && !dockingModalOpen && !dockingError && (
+                <Alert severity="success" sx={{ mt: 4 }}>
+                  Docking completed successfully! <Button 
+                    color="primary" 
+                    size="small" 
+                    onClick={() => setDockingModalOpen(true)}
+                  >
+                    View Results
+                  </Button>
                 </Alert>
               )}
               

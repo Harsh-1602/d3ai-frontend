@@ -439,6 +439,71 @@ export const drugDiscoveryApi = {
 };
 
 /**
+ * API client for molecular docking endpoints
+ */
+export const dockingApi = {
+  // Perform molecular docking with NVIDIA's DiffDock
+  dock: async (params: { 
+    protein: string, // Protein PDB data
+    ligand: string,  // Ligand SMILES or SDF data
+    ligand_file_type?: 'smiles' | 'sdf', // Specify the format of the ligand
+    num_poses?: number,
+    time_divisions?: number,
+    steps?: number,
+    save_trajectory?: boolean
+  }) => {
+    try {
+      const result = await fetchApi<{
+        ligand_positions: string[],
+        position_confidence: number[],
+        status: string,
+        message?: string
+      }>(`docking/diffdock`, {
+        method: 'POST',
+        body: JSON.stringify({
+          protein: params.protein,
+          ligand: params.ligand,
+          ligand_file_type: params.ligand_file_type || "smiles", // Default to SMILES if not specified
+          num_poses: params.num_poses || 2,
+          time_divisions: params.time_divisions || 20,
+          steps: params.steps || 18,
+          save_trajectory: params.save_trajectory || false,
+          is_staged: false
+        }),
+      });
+      
+      return result;
+    } catch (error) {
+      console.error('Error with molecular docking:', error);
+      throw error;
+    }
+  },
+  
+  // Get docking visualization in 3D
+  getDockingVisualization: async (params: {
+    protein: string,
+    ligand_poses: string[],
+    confidence_scores: number[]
+  }) => {
+    try {
+      const result = await fetchApi<{
+        viewer_html: string,
+        status: string,
+        message?: string
+      }>(`docking/visualization`, {
+        method: 'POST',
+        body: JSON.stringify(params),
+      });
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting docking visualization:', error);
+      throw error;
+    }
+  }
+};
+
+/**
  * Utility function to get a molecule image from any available source
  */
 export const fetchMoleculeImage = async (smiles: string): Promise<string | null> => {
