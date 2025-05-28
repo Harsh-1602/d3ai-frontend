@@ -47,9 +47,7 @@ interface NvidiaGenMolGeneratorProps {
 
 const scoringOptions = [
   { value: "QED", label: "QED (Drug-likeness)" },
-  { value: "logP", label: "logP (Lipophilicity)" },
-  { value: "SAS", label: "SAS (Synthetic Accessibility)" },
-  { value: "MW", label: "MW (Molecular Weight)" },
+  { value: "LogP", label: "LogP (Lipophilicity)" },
 ];
 
 const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({ 
@@ -70,7 +68,7 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
   
   // State for form inputs
   const [smiles, setSmiles] = useState<string>(initialSmilesArray[0] || "");
-  const [numMolecules, setNumMolecules] = useState<number>(30);
+  const [numMolecules, setNumMolecules] = useState<number>(5);
   const [temperature, setTemperature] = useState<string>("1");
   const [noise, setNoise] = useState<string>("1");
   const [stepSize, setStepSize] = useState<number>(1);
@@ -133,11 +131,16 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
     } else {
       // Add seed if not already selected
       setSelectedSeeds([...selectedSeeds, seed]);
+      
+      // Set this seed as the visible one in the text field
+      setSmiles(seed);
     }
+    
+    console.log("Selected seeds updated:", selectedSeeds);
   };
 
   const handleGenerateMolecules = async () => {
-    // Use the selected seeds for generation
+    // Use the selected seeds for generation if available, otherwise use the manually entered SMILES
     const seedsToUse = selectedSeeds.length > 0 ? selectedSeeds : [smiles];
     
     if (seedsToUse.every(s => !s.trim())) {
@@ -145,18 +148,54 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
       return;
     }
 
+    console.log("Using seeds for generation:", seedsToUse);
+    console.log("Generation parameters:", {
+      numMolecules,
+      temperature,
+      noise,
+      stepSize,
+      scoring,
+      unique
+    });
+    
     try {
       setLoading(true);
       setError(null);
       
       let allMolecules: Molecule[] = [];
       
-      // Process each selected seed
-      for (const currentSeed of seedsToUse) {
+      // Process all seeds at once if there are multiple
+      if (seedsToUse.length > 1) {
+        console.log(`Processing ${seedsToUse.length} seeds in batch`);
+        // Use the full number of molecules for each seed
+        
+        // Process seeds in parallel
+        const moleculePromises = seedsToUse.map(seed => 
+          moleculeApi.generateWithNvidiaGenMol({
+            smiles: seed,
+            num_molecules: numMolecules, // Full number for each seed
+            temperature,
+            noise,
+            step_size: stepSize,
+            scoring,
+            unique
+          }).catch(err => {
+            console.error(`Error generating molecules for seed ${seed}:`, err);
+            return [];
+          })
+        );
+        
+        const results = await Promise.all(moleculePromises);
+        allMolecules = results.flat();
+        console.log(`Received a total of ${allMolecules.length} molecules from ${seedsToUse.length} seeds`);
+      } else {
+        // Process a single seed
+        const currentSeed = seedsToUse[0];
         try {
+          console.log(`Sending API request with SMILE: "${currentSeed}"`);
           const molecules = await moleculeApi.generateWithNvidiaGenMol({
             smiles: currentSeed,
-            num_molecules: Math.floor(numMolecules / seedsToUse.length) || 1, // Distribute molecules across seeds
+            num_molecules: numMolecules,
             temperature,
             noise,
             step_size: stepSize,
@@ -164,13 +203,15 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
             unique
           });
           
-          allMolecules = [...allMolecules, ...molecules];
+          console.log(`Received ${molecules.length} molecules from API`);
+          allMolecules = molecules;
         } catch (err: any) {
           // Log detailed error for debugging
           console.error(`Error generating molecules with NVIDIA GenMol using seed ${currentSeed}:`, err);
+          console.error("Response data:", err.response?.data);
           
           // Create dummy data for this seed
-          for (let i = 0; i < Math.floor(numMolecules / seedsToUse.length); i++) {
+          for (let i = 0; i < numMolecules; i++) {
             allMolecules.push({
               id: `mol-nvidia-${currentSeed.substring(0, 5)}-${i}`,
               smile: currentSeed,
@@ -287,7 +328,7 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
                     <Typography variant="body2" color="primary" sx={{ flex: 1 }}>
                       {selectedSeeds.length === 1 
                         ? "1 seed molecule selected for generation" 
-                        : `${selectedSeeds.length} seed molecules selected for generation`}
+                        : `${selectedSeeds.length} seed molecules selected for batch generation`}
                     </Typography>
                     <Button 
                       size="small" 
@@ -310,7 +351,14 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
                 <TextField
                   label="Seed SMILES"
                   value={smiles}
-                  onChange={(e) => setSmiles(e.target.value)}
+                  onChange={(e) => {
+                    const newSmiles = e.target.value;
+                    setSmiles(newSmiles);
+                    // Clear selected seeds when manually typing to ensure this value is used
+                    if (newSmiles !== availableSeeds[selectedSeedIndex]) {
+                      setSelectedSeeds([]);
+                    }
+                  }}
                   fullWidth
                   variant="outlined"
                   placeholder="Enter a SMILES string for the seed molecule"
@@ -405,7 +453,10 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
                 valueLabelDisplay="auto"
               />
               <Typography variant="body2" color="text.secondary">
-                {numMolecules} molecules {selectedSeeds.length > 1 ? `(approx. ${Math.floor(numMolecules / selectedSeeds.length)} per seed)` : ''}
+                {numMolecules} molecules 
+                {selectedSeeds.length > 1 
+                  ? ` per seed (total: ${numMolecules * selectedSeeds.length} from ${selectedSeeds.length} seeds)` 
+                  : ''}
               </Typography>
             </Grid>
             
@@ -491,10 +542,26 @@ const NvidiaGenMolGenerator: React.FC<NvidiaGenMolGeneratorProps> = ({
                 onClick={handleGenerateMolecules}
                 disabled={loading}
                 startIcon={loading ? <CircularProgress size={20} /> : null}
-                sx={{ mt: 2 }}
+                sx={{ mt: 2, mr: 2 }}
               >
                 {loading ? 'Generating...' : 'Generate Molecules'}
               </Button>
+              
+              {process.env.NODE_ENV === 'development' && (
+                <Button
+                  variant="outlined"
+                  color="secondary"
+                  onClick={() => {
+                    console.log("Current state:");
+                    console.log("SMILES:", smiles);
+                    console.log("Selected Seeds:", selectedSeeds);
+                    console.log("Available Seeds:", availableSeeds);
+                  }}
+                  sx={{ mt: 2 }}
+                >
+                  Debug State
+                </Button>
+              )}
             </Grid>
             
             {error && (
