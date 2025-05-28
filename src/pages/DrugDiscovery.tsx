@@ -41,6 +41,8 @@ import NvidiaGenMolGenerator from '../components/MoleculeGeneration/NvidiaGenMol
 import DockingVisualization from '../components/DockingVisualization';
 import { proteinApi, moleculeApi, dockingApi, Molecule } from '../utils/api';
 import CloseIcon from '@mui/icons-material/Close';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 
 // Extend the Protein interface to include gene_name property
 interface Protein extends BaseProtein {
@@ -52,6 +54,7 @@ interface DrugMolecule {
   id?: string;
   molecule_id?: string;
   name?: string;
+  pref_name?: string;
   smiles?: string;
   smile?: string;
   chembl_id?: string;
@@ -166,6 +169,12 @@ const DrugDiscovery = () => {
   
   // Add this state to track proteins with their PDB IDs
   const [proteinPdbMap, setProteinPdbMap] = useState<{[id: string]: string}>({});
+  
+  // Add this state for managing the success message visibility
+  const [showDockingSuccess, setShowDockingSuccess] = useState<boolean>(true);
+  
+  // Add this state near other docking states (around line 103):
+  const [isDockingVisualizationVisible, setIsDockingVisualizationVisible] = useState<boolean>(true);
   
   const theme = useTheme();
 
@@ -425,6 +434,7 @@ const DrugDiscovery = () => {
     setDockingResult(null);
     setDockingVisualization(null);
     setDockingModalOpen(false);
+    setIsDockingVisualizationVisible(true);
     
     try {
       // Get protein PDB data using the protein's PDB ID
@@ -571,6 +581,14 @@ const DrugDiscovery = () => {
       fetchProteinPdbIds(proteins);
     }
   }, [proteins]);
+
+  // Add this effect to reset the success message visibility when docking completes
+  useEffect(() => {
+    if (dockingResult) {
+      setShowDockingSuccess(true);
+      setIsDockingVisualizationVisible(true);
+    }
+  }, [dockingResult]);
 
   return (
     <motion.div
@@ -1027,58 +1045,76 @@ const DrugDiscovery = () => {
                         value={selectedDockingMolecule || ''}
                         onChange={(e) => handleDockingMoleculeSelect(e.target.value)}
                       >
-                        {proteinDrugs.map((drug) => {
-                          const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
-                          return (
-                            <FormControlLabel
-                              key={drugId}
-                              value={drugId}
-                              control={<Radio />}
-                              label={
-                                <Box>
-                                  <Typography variant="body1">
-                                    {drug.name || drug.molecule_id || drug.chembl_id || 'Unknown'}
-                                  </Typography>
-                                  <Typography 
-                                    variant="body2" 
-                                    color="text.secondary"
-                                    sx={{ 
-                                      fontFamily: 'monospace', 
-                                      fontSize: '0.8rem',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      maxWidth: '100%'
-                                    }}
-                                  >
-                                    {drug.smiles || drug.smile || ''}
-                                  </Typography>
-                                </Box>
-                              }
-                              sx={{
-                                p: 1, 
-                                my: 1, 
-                                border: '1px solid',
-                                borderColor: selectedDockingMolecule === drugId ? 'primary.main' : 'divider',
-                                borderRadius: 1,
-                                width: '100%',
-                                bgcolor: selectedDockingMolecule === drugId ? 'action.selected' : 'transparent'
-                              }}
-                            />
-                          );
-                        })}
+                        {/* Filter to only show selected molecules from previous stage */}
+                        {proteinDrugs
+                          .filter(drug => {
+                            const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+                            return selectedDrugs[drugId];
+                          })
+                          .map((drug) => {
+                            const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+                            return (
+                              <FormControlLabel
+                                key={drugId}
+                                value={drugId}
+                                control={<Radio />}
+                                label={
+                                  <Box>
+                                    <Typography variant="body1" fontWeight={500}>
+                                      {drug.name || 
+                                       (drug as any).pref_name || 
+                                       (drug.molecule_chembl_id ? `ChEMBL: ${drug.molecule_chembl_id}` : 'Unknown')}
+                                    </Typography>
+                                    <Typography 
+                                      variant="body2" 
+                                      color="text.secondary"
+                                      sx={{ 
+                                        fontFamily: 'monospace', 
+                                        fontSize: '0.8rem',
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        maxWidth: '100%'
+                                      }}
+                                    >
+                                      {drug.smiles || drug.smile || ''}
+                                    </Typography>
+                                  </Box>
+                                }
+                                sx={{
+                                  p: 1, 
+                                  my: 1, 
+                                  border: '1px solid',
+                                  borderColor: selectedDockingMolecule === drugId ? 'primary.main' : 'divider',
+                                  borderRadius: 1,
+                                  width: '100%',
+                                  bgcolor: selectedDockingMolecule === drugId ? 'action.selected' : 'transparent'
+                                }}
+                              />
+                            );
+                          })}
                       </RadioGroup>
                       
-                      {proteinDrugs.length === 0 && (
+                      {proteinDrugs.filter(drug => {
+                        const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+                        return selectedDrugs[drugId];
+                      }).length === 0 && (
                         <Alert severity="info">
-                          No seed molecules available. Please go back to select drugs.
+                          No molecules were selected in the previous step. Please go back to select seed molecules.
                         </Alert>
                       )}
                     </TabPanel>
                   </Paper>
                   
                   {/* Docking button */}
-                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                  <Box sx={{ 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    mt: 3,
+                    mb: 5,
+                    position: 'relative',
+                    zIndex: 1
+                  }}>
                     <Button
                       variant="contained"
                       color="primary"
@@ -1087,13 +1123,17 @@ const DrugDiscovery = () => {
                       disabled={!selectedDockingProtein || !selectedDockingMolecule || isDockingLoading}
                       startIcon={isDockingLoading ? <CircularProgress size={24} color="inherit" /> : null}
                       sx={{ 
-                        py: 1.5, 
-                        px: 4, 
+                        py: 1.8, 
+                        px: 5, 
                         borderRadius: 2,
-                        boxShadow: theme.shadows[5]
+                        fontSize: '1.05rem',
+                        background: dockingResult && !isDockingLoading ? 
+                          'linear-gradient(45deg, #6366f1, #8b5cf6)' : undefined,
+                        boxShadow: theme.shadows[5],
+                        minWidth: '280px'
                       }}
                     >
-                      {isDockingLoading ? 'Docking...' : 'Dock Selected Molecules'}
+                      {isDockingLoading ? 'Docking...' : dockingResult ? 'Dock Again' : 'Dock Selected Molecules'}
                     </Button>
                   </Box>
                     </Grid>
@@ -1149,7 +1189,9 @@ const DrugDiscovery = () => {
                             viewerHtml={dockingVisualization}
                             isLoading={isDockingLoading}
                             error={dockingError}
-                            height="600px"
+                            height="550px"
+                            controlsPosition="right"
+                            onClose={() => setIsDockingVisualizationVisible(false)}
                           />
                           
                           {/* Confidence score legend */}
@@ -1228,16 +1270,153 @@ const DrugDiscovery = () => {
               )}
               
               {/* Success message when docking results are available but modal is closed */}
-              {dockingResult && !dockingModalOpen && !dockingError && (
-                <Alert severity="success" sx={{ mt: 4 }}>
-                  Docking completed successfully! <Button 
-                    color="primary" 
-                    size="small" 
-                    onClick={() => setDockingModalOpen(true)}
+              {dockingResult && !dockingModalOpen && !dockingError && showDockingSuccess && (
+                <Box
+                  sx={{
+                    position: 'relative',
+                    mt: 4,
+                    mb: 3,
+                    width: '100%',
+                    borderRadius: 2,
+                    overflow: 'visible',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                >
+                  {/* Background glow effect */}
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      width: '100%',
+                      height: '110%',
+                      top: '-5%',
+                      left: '0',
+                      background: 'linear-gradient(90deg, rgba(20, 24, 33, 0.5), rgba(139, 92, 246, 0.4), rgba(99, 102, 241, 0.2))',
+                      filter: 'blur(15px)',
+                      borderRadius: '16px',
+                      zIndex: 1,
+                      opacity: 1,
+                      pointerEvents: 'none'
+                    }}
+                  />
+                  
+                  {/* Button glow effect */}
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      width: '20%',
+                      height: '180%',
+                      top: '-40%',
+                      right: '0',
+                      background: 'radial-gradient(circle, rgba(139, 92, 246, 0.6), rgba(99, 102, 241, 0.2), transparent 70%)',
+                      filter: 'blur(20px)',
+                      zIndex: 2,
+                      opacity: 0.8,
+                      pointerEvents: 'none'
+                    }}
+                  />
+                  
+                  <Alert 
+                    severity="success" 
+                    sx={{ 
+                      p: 2.5,
+                      py: 3,
+                      position: 'relative',
+                      zIndex: 2,
+                      width: '100%',
+                      borderRadius: 2,
+                      backgroundColor: 'rgba(18, 25, 33, 0.9)', // Dark background with high opacity
+                      backdropFilter: 'blur(5px)',
+                      border: '1px solid rgba(46, 125, 50, 0.4)',
+                      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+                      pr: 6 // Add padding to the right for the close button
+                    }}
+                    icon={<Box component="span" sx={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      color: '#66bb6a',
+                      '& svg': { fontSize: 30 },
+                      mr: 2
+                    }}><CheckCircleIcon /></Box>}
+                    action={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Button 
+                          color="success" 
+                          variant="contained"
+                          size="medium"
+                          onClick={() => {
+                            setDockingModalOpen(true);
+                            setIsDockingVisualizationVisible(true);
+                          }}
+                          sx={{ 
+                            borderRadius: 28,
+                            py: 1.2,
+                            px: 3.5,
+                            ml: 2,
+                            background: 'linear-gradient(45deg, #2e7d32, #66bb6a)',
+                            boxShadow: '0 2px 8px rgba(46, 125, 50, 0.5), 0 0 20px rgba(46, 125, 50, 0.3)',
+                            '&:hover': {
+                              background: 'linear-gradient(45deg, #1b5e20, #4caf50)',
+                              boxShadow: '0 4px 12px rgba(46, 125, 50, 0.6), 0 0 25px rgba(46, 125, 50, 0.4)',
+                            },
+                            zIndex: 3,
+                            position: 'relative'
+                          }}
+                        >
+                          View Results
+                        </Button>
+                        <IconButton
+                          aria-label="close"
+                          color="inherit"
+                          size="small"
+                          onClick={() => setShowDockingSuccess(false)}
+                          sx={{
+                            position: 'absolute',
+                            right: 8,
+                            top: 8,
+                            color: 'rgba(255, 255, 255, 0.7)',
+                            backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                            borderRadius: '50%',
+                            width: 30,
+                            height: 30,
+                            '&:hover': {
+                              backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                              color: 'rgba(255, 255, 255, 1)',
+                            }
+                          }}
+                        >
+                          <CloseIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    }
                   >
-                    View Results
+                    <Typography variant="body1" sx={{ fontWeight: 500, color: '#66bb6a', fontSize: '1.1rem', textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>
+                      Docking completed successfully!
+                    </Typography>
+                  </Alert>
+                </Box>
+              )}
+              
+              {/* Add a "Show Visualization" button when the visualization is hidden, right after the DockingVisualization component */}
+              {!isDockingVisualizationVisible && dockingVisualization && (
+                <Box sx={{ 
+                  display: 'flex', 
+                  justifyContent: 'center', 
+                  alignItems: 'center', 
+                  height: '550px', 
+                  border: '2px dashed rgba(0, 0, 0, 0.1)', 
+                  borderRadius: 2 
+                }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<OpenInFullIcon />}
+                    onClick={() => setIsDockingVisualizationVisible(true)}
+                    sx={{ py: 1.5, px: 3 }}
+                  >
+                    Show Docking Visualization
                   </Button>
-                </Alert>
+                </Box>
               )}
               
               <Box sx={{ display: 'flex', flexDirection: 'row', pt: 4 }}>
