@@ -35,7 +35,9 @@ import {
   ListItemIcon,
   ListItemButton,
   AppBar,
-  Toolbar
+  Toolbar,
+  useMediaQuery,
+  Badge
 } from '@mui/material';
 import { motion } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
@@ -58,6 +60,8 @@ import MedicationIcon from '@mui/icons-material/Medication';
 import CoronavirusIcon from '@mui/icons-material/Coronavirus';
 import RestoreIcon from '@mui/icons-material/Restore';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 
 // Extend the Protein interface to include gene_name property
 interface Protein extends BaseProtein {
@@ -205,7 +209,7 @@ const DrugDiscovery = () => {
   const [isDockingVisualizationVisible, setIsDockingVisualizationVisible] = useState<boolean>(true);
   
   // Replace history state with sessions state
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessions, setSessions] = useState<HistorySession[]>([]);
   const [currentSessionName, setCurrentSessionName] = useState<string>('');
   const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
@@ -216,9 +220,19 @@ const DrugDiscovery = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   
   const theme = useTheme();
+  // Check if screen is mobile-sized
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // Load sessions from localStorage on component mount
+  // Load saved sidebar state and sessions from localStorage on component mount
   useEffect(() => {
+    const savedSidebarState = localStorage.getItem('drugDiscoverySidebarOpen');
+    if (savedSidebarState !== null) {
+      setSidebarOpen(savedSidebarState === 'true');
+    } else {
+      // Default to open on desktop, closed on mobile
+      setSidebarOpen(!isMobile);
+    }
+
     const savedSessions = localStorage.getItem('drugDiscoverySessions');
     if (savedSessions) {
       try {
@@ -233,7 +247,12 @@ const DrugDiscovery = () => {
         console.error('Error parsing saved sessions:', e);
       }
     }
-  }, []);
+  }, [isMobile]);
+
+  // Save sidebar state to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('drugDiscoverySidebarOpen', sidebarOpen.toString());
+  }, [sidebarOpen]);
 
   // Save sessions to localStorage whenever it changes
   useEffect(() => {
@@ -349,7 +368,7 @@ const DrugDiscovery = () => {
     setActiveStep(3);
     
     // Close dialogs
-    setDrawerOpen(false);
+    setSidebarOpen(false);
     setSessionDetailsOpen(false);
     setSelectedSession(null);
   };
@@ -874,6 +893,16 @@ const DrugDiscovery = () => {
     setSaveSessionDialogOpen(false);
   };
 
+  // Calculate the width for the main content based on sidebar state
+  const getMainContentWidth = () => {
+    // If sidebar is closed or on mobile, use full width
+    if (!sidebarOpen || isMobile) {
+      return '100%';
+    }
+    // If sidebar is open on desktop, adjust width
+    return 'calc(100% - 280px)';
+  };
+
   return (
     <motion.div
       initial="initial"
@@ -881,44 +910,63 @@ const DrugDiscovery = () => {
       exit="exit"
       variants={pageVariants}
       transition={{ duration: 0.5 }}
+      style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}
     >
-      {/* Hamburger menu and app bar */}
-      <AppBar position="static" color="transparent" elevation={0} sx={{mb: 2}}>
-        <Toolbar>
-          <IconButton 
-            edge="start" 
-            color="inherit" 
-            aria-label="menu"
-            onClick={() => setDrawerOpen(true)}
-            sx={{ mr: 2 }}
-          >
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            D3AI Drug Discovery
-          </Typography>
-        </Toolbar>
-      </AppBar>
-      
-      {/* Sessions drawer */}
-      <Drawer
-        anchor="left"
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+      {/* Persistent sidebar replacing the drawer */}
+      <Box
+        sx={{
+          width: sidebarOpen ? 280 : 0,
+          flexShrink: 0,
+          height: '100%',
+          transition: theme.transitions.create('width', {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.enteringScreen,
+          }),
+          bgcolor: 'background.paper',
+          borderRight: '1px solid rgba(0, 0, 0, 0.12)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          position: isMobile ? 'absolute' : 'relative',
+          zIndex: 1200,
+        }}
       >
+        {/* Sidebar header with close button */}
         <Box
-          sx={{ width: 350 }}
-          role="presentation"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            p: 2,
+            borderBottom: '1px solid rgba(0, 0, 0, 0.12)',
+            bgcolor: 'background.default',
+          }}
         >
-          <Box sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
-            <Typography variant="h6" component="div">
-              Saved Sessions
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              View or restore previous research sessions
-            </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <HistoryIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Typography variant="h6">Sessions</Typography>
+            {currentSessionId && (
+              <Badge 
+                color="success" 
+                variant="dot" 
+                sx={{ ml: 1 }}
+                title="Current active session"
+              />
+            )}
           </Box>
-          
+          <IconButton onClick={() => setSidebarOpen(false)}>
+            <ChevronLeftIcon />
+          </IconButton>
+        </Box>
+        
+        {/* Sidebar content */}
+        <Box
+          sx={{
+            overflow: 'auto',
+            flexGrow: 1,
+            p: 1,
+          }}
+        >
           {sessions.length === 0 ? (
             <Box sx={{ p: 3, textAlign: 'center' }}>
               <HistoryIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
@@ -953,18 +1001,40 @@ const DrugDiscovery = () => {
                       setSelectedSession(session);
                       setSessionDetailsOpen(true);
                     }}
+                    selected={session.id === currentSessionId}
+                    sx={{
+                      borderLeft: session.id === currentSessionId ? 
+                        `3px solid ${theme.palette.primary.main}` : 'none',
+                      bgcolor: session.id === currentSessionId ? 
+                        'rgba(99, 102, 241, 0.08)' : 'transparent'
+                    }}
                   >
                     <ListItemIcon>
-                      <ScienceIcon />
+                      {session.id === currentSessionId ? 
+                        <Badge color="success" variant="dot"><ScienceIcon /></Badge> : 
+                        <ScienceIcon />
+                      }
                     </ListItemIcon>
                     <ListItemText 
-                      primary={session.name} 
+                      primary={
+                        <Typography 
+                          variant="body1" 
+                          noWrap
+                          sx={{ 
+                            fontWeight: session.id === currentSessionId ? 600 : 400,
+                            maxWidth: '160px'
+                          }}
+                        >
+                          {session.name}
+                        </Typography>
+                      }
                       secondary={
                         <React.Fragment>
-                          <Typography component="span" variant="body2">
+                          <Typography component="span" variant="body2" noWrap>
                             {session.disease?.name}
                           </Typography>
-                          {" — "}{formatDate(session.timestamp)}
+                          <br />
+                          {formatDate(session.timestamp)}
                         </React.Fragment>
                       }
                     />
@@ -974,373 +1044,96 @@ const DrugDiscovery = () => {
             </List>
           )}
         </Box>
-      </Drawer>
-      
-      {/* Session Details Dialog */}
-      <Dialog
-        open={sessionDetailsOpen}
-        onClose={() => setSessionDetailsOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        {selectedSession && (
-          <>
-            <DialogTitle sx={{ 
-              display: 'flex', 
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'linear-gradient(45deg, #6366f1, #8b5cf6)',
-              color: 'white'
-            }}>
-              <Box>
-                <Typography variant="h6">{selectedSession.name}</Typography>
-                <Typography variant="subtitle2">
-                  {formatDate(selectedSession.timestamp)}
-                </Typography>
-              </Box>
-              <IconButton
-                aria-label="close"
-                onClick={() => setSessionDetailsOpen(false)}
-                sx={{ color: 'white' }}
-              >
-                <CloseIcon />
-              </IconButton>
-            </DialogTitle>
-            <DialogContent dividers>
-              <Grid container spacing={3}>
-                {/* Disease Section */}
-                <Grid item xs={12}>
-                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <CoronavirusIcon sx={{ mr: 1, color: 'primary.main' }} />
-                      <Typography variant="h6">
-                        Disease Selection
-                      </Typography>
-                      {getDiseaseStepCompletion(selectedSession) && (
-                        <Chip 
-                          label="Completed" 
-                          color="success" 
-                          size="small" 
-                          sx={{ ml: 1 }} 
-                        />
-                      )}
-                    </Box>
-                    <Divider sx={{ my: 1 }} />
-                    {selectedSession.disease ? (
-                      <Box sx={{ mt: 1 }}>
-                        <Typography variant="body1" fontWeight="bold">
-                          {selectedSession.disease.name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          ID: {selectedSession.disease.id}
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No disease selected
-                      </Typography>
-                    )}
-                  </Paper>
-                </Grid>
-                
-                {/* Proteins Section */}
-                <Grid item xs={12}>
-                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <ScienceIcon sx={{ mr: 1, color: 'primary.main' }} />
-                      <Typography variant="h6">
-                        Selected Proteins
-                      </Typography>
-                      {getProteinStepCompletion(selectedSession) && (
-                        <Chip 
-                          label="Completed" 
-                          color="success" 
-                          size="small" 
-                          sx={{ ml: 1 }} 
-                        />
-                      )}
-                    </Box>
-                    <Divider sx={{ my: 1 }} />
-                    {selectedSession.selectedProteins && selectedSession.selectedProteins.length > 0 ? (
-                      <Grid container spacing={2} sx={{ mt: 1 }}>
-                        {selectedSession.selectedProteins.map(protein => (
-                          <Grid item xs={12} sm={6} md={4} key={protein.id}>
-                            <Card variant="outlined">
-                              <CardContent>
-                                <Typography variant="subtitle1" fontWeight="bold">
-                                  {protein.name || protein.gene_name || protein.id}
-                                </Typography>
-                                {protein.uniprot_id && (
-                                  <Typography variant="body2" color="text.secondary">
-                                    UniProt: {protein.uniprot_id}
-                                  </Typography>
-                                )}
-                                {protein.pdb_id && (
-                                  <Typography variant="body2" color="text.secondary">
-                                    PDB ID: {protein.pdb_id}
-                                  </Typography>
-                                )}
-                              </CardContent>
-                            </Card>
-                          </Grid>
-                        ))}
-                      </Grid>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No proteins selected
-                      </Typography>
-                    )}
-                  </Paper>
-                </Grid>
-                
-                {/* Molecules Section */}
-                <Grid item xs={12}>
-                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <MedicationIcon sx={{ mr: 1, color: 'primary.main' }} />
-                      <Typography variant="h6">
-                        Molecule Analysis
-                      </Typography>
-                      {getMoleculeStepCompletion(selectedSession) && (
-                        <Chip 
-                          label="Completed" 
-                          color="success" 
-                          size="small" 
-                          sx={{ ml: 1 }} 
-                        />
-                      )}
-                    </Box>
-                    <Divider sx={{ my: 1 }} />
-                    
-                    {/* Generated molecules */}
-                    {selectedSession.generatedMolecules && selectedSession.generatedMolecules.length > 0 && (
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="subtitle1" fontWeight="bold">
-                          Generated Molecules ({selectedSession.generatedMolecules.length})
-                        </Typography>
-                        <Grid container spacing={2} sx={{ mt: 1 }}>
-                          {selectedSession.generatedMolecules.slice(0, 3).map(molecule => (
-                            <Grid item xs={12} sm={4} key={molecule.id}>
-                              <Card variant="outlined">
-                                <CardContent>
-                                  <Typography variant="subtitle2">
-                                    {molecule.name || `Molecule ${molecule.id}`}
-                                  </Typography>
-                                  <Typography 
-                                    variant="body2" 
-                                    color="text.secondary"
-                                    sx={{ 
-                                      fontFamily: 'monospace', 
-                                      fontSize: '0.8rem',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis'
-                                    }}
-                                  >
-                                    {molecule.smile}
-                                  </Typography>
-                                </CardContent>
-                              </Card>
-                            </Grid>
-                          ))}
-                          {selectedSession.generatedMolecules.length > 3 && (
-                            <Grid item xs={12}>
-                              <Typography variant="body2" color="text.secondary" align="center">
-                                +{selectedSession.generatedMolecules.length - 3} more molecules
-                              </Typography>
-                            </Grid>
-                          )}
-                        </Grid>
-                      </Box>
-                    )}
-                    
-                    {/* Selected drug molecules */}
-                    {selectedSession.selectedDrugs && selectedSession.selectedDrugs.length > 0 && (
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="subtitle1" fontWeight="bold">
-                          Selected Drug Molecules ({selectedSession.selectedDrugs.length})
-                        </Typography>
-                        <Grid container spacing={2} sx={{ mt: 1 }}>
-                          {selectedSession.selectedDrugs.slice(0, 3).map(drug => (
-                            <Grid item xs={12} sm={4} key={drug.id || drug.molecule_id || drug.molecule_chembl_id}>
-                              <Card variant="outlined">
-                                <CardContent>
-                                  <Typography variant="subtitle2">
-                                    {drug.name || drug.molecule_id || drug.chembl_id || 'Unknown'}
-                                  </Typography>
-                                  {(drug.smiles || drug.smile) && (
-                                    <Typography 
-                                      variant="body2" 
-                                      color="text.secondary"
-                                      sx={{ 
-                                        fontFamily: 'monospace', 
-                                        fontSize: '0.8rem',
-                                        whiteSpace: 'nowrap',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis'
-                                      }}
-                                    >
-                                      {drug.smiles || drug.smile}
-                                    </Typography>
-                                  )}
-                                </CardContent>
-                              </Card>
-                            </Grid>
-                          ))}
-                          {selectedSession.selectedDrugs.length > 3 && (
-                            <Grid item xs={12}>
-                              <Typography variant="body2" color="text.secondary" align="center">
-                                +{selectedSession.selectedDrugs.length - 3} more drugs
-                              </Typography>
-                            </Grid>
-                          )}
-                        </Grid>
-                      </Box>
-                    )}
-                    
-                    {!getMoleculeStepCompletion(selectedSession) && (
-                      <Typography variant="body2" color="text.secondary">
-                        No molecules generated or selected
-                      </Typography>
-                    )}
-                  </Paper>
-                </Grid>
-                
-                {/* Docking Results Section */}
-                <Grid item xs={12}>
-                  <Paper elevation={1} sx={{ p: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <HistoryIcon sx={{ mr: 1, color: 'primary.main' }} />
-                      <Typography variant="h6">
-                        Docking Results
-                      </Typography>
-                      {getDockingStepCompletion(selectedSession) && (
-                        <Chip 
-                          label="Completed" 
-                          color="success" 
-                          size="small" 
-                          sx={{ ml: 1 }} 
-                        />
-                      )}
-                    </Box>
-                    <Divider sx={{ my: 1 }} />
-                    
-                    {selectedSession.dockingResult ? (
-                      <Box sx={{ mt: 1 }}>
-                        <Typography variant="subtitle1">
-                          Docking completed successfully
-                        </Typography>
-                        {selectedSession.dockingResult.position_confidence && (
-                          <Box sx={{ mt: 1 }}>
-                            <Typography variant="body2">
-                              Docking poses found: {selectedSession.dockingResult.ligand_positions?.length || 0}
-                            </Typography>
-                            <Typography variant="body2">
-                              Best confidence score: {
-                                Math.max(...(selectedSession.dockingResult.position_confidence || [0])).toFixed(2)
-                              }
-                            </Typography>
-                          </Box>
-                        )}
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No docking results available
-                      </Typography>
-                    )}
-                  </Paper>
-                </Grid>
-              </Grid>
-            </DialogContent>
-            
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
-              <Button 
-                onClick={() => setSessionDetailsOpen(false)} 
-                sx={{ mr: 1 }}
-              >
-                Close
-              </Button>
-              <Button 
-                variant="contained" 
-                startIcon={<RestoreIcon />}
-                onClick={() => restoreFromSession(selectedSession)}
-              >
-                Restore Session
-              </Button>
-            </Box>
-          </>
-        )}
-      </Dialog>
-      
-      {/* Save Session Dialog */}
-      <Dialog
-        open={saveSessionDialogOpen}
-        onClose={() => setSaveSessionDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Save Current Session</DialogTitle>
-        <DialogContent>
-          <Typography variant="body1" paragraph>
-            Would you like to save your current research session before starting over?
-          </Typography>
-          <FormControl fullWidth sx={{ mt: 2 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Session Name
-            </Typography>
-            <input
-              type="text"
-              value={currentSessionName}
-              onChange={(e) => setCurrentSessionName(e.target.value)}
-              placeholder={`${selectedDisease?.name || 'Drug Discovery'} Session`}
-              style={{
-                width: '100%',
-                padding: '10px',
-                marginTop: '8px',
-                borderRadius: '4px',
-                border: '1px solid rgba(0,0,0,0.23)',
-                fontSize: '16px'
-              }}
-            />
-          </FormControl>
-        </DialogContent>
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
+        
+        {/* Add session actions at bottom */}
+        <Box sx={{ 
+          p: 1, 
+          borderTop: '1px solid rgba(0, 0, 0, 0.12)', 
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center' 
+        }}>
           <Button 
+            size="small"
+            startIcon={<RestoreIcon />}
+            disabled={sessions.length === 0}
             onClick={() => {
-              setSaveSessionDialogOpen(false);
-              resetWorkflow();
-            }} 
-            sx={{ mr: 1 }}
-          >
-            Don't Save
-          </Button>
-          <Button 
-            variant="contained"
-            onClick={() => {
-              // Use disease name as default if no name provided
-              const sessionName = currentSessionName || `${selectedDisease?.name || 'Drug Discovery'} Session`;
-              saveSessionAndReset(sessionName);
+              // Find the most recent session that isn't the current one
+              const recentSession = sessions.find(s => s.id !== currentSessionId);
+              if (recentSession) {
+                setSelectedSession(recentSession);
+                setSessionDetailsOpen(true);
+              }
             }}
-            disabled={!selectedDisease}
           >
-            Save Session
+            Latest Session
           </Button>
+          {currentSessionId && (
+            <Button 
+              size="small" 
+              color="primary" 
+              variant="outlined" 
+              onClick={() => setSaveSessionDialogOpen(true)}
+            >
+              Save
+            </Button>
+          )}
         </Box>
-      </Dialog>
+      </Box>
 
-      <Container maxWidth="lg" sx={{ mt: 0, mb: 8 }}>
+      {/* Main content */}
+      <Box
+        sx={{
+          flexGrow: 1,
+          transition: theme.transitions.create('width', {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.enteringScreen,
+          }),
+          width: getMainContentWidth(),
+          height: '100%',
+          overflow: 'auto',
+          position: 'relative',
+        }}
+      >
+        {/* Collapsible sidebar toggle button */}
+        {!sidebarOpen && (
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => setSidebarOpen(true)}
+            sx={{
+              position: 'fixed',
+              left: 0,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              minWidth: '32px',
+              width: '32px',
+              height: '100px',
+              borderRadius: '0 4px 4px 0',
+              zIndex: 1100,
+              p: 0,
+              boxShadow: 3
+            }}
+            aria-label="Open session history"
+          >
+            <ChevronRightIcon />
+          </Button>
+        )}
+    
+        {/* App content */}
+        <Container maxWidth="lg" sx={{ mt: 4, mb: 8 }}>
           <Paper 
-          elevation={3} 
+            elevation={3} 
             sx={{ 
               p: 4,
-                mb: 4,
-            borderRadius: 2
-              }}
-            >
-          <Typography variant="h4" gutterBottom>
-            Disease-based Drug Discovery
+              mb: 4,
+              borderRadius: 2
+            }}
+          >
+            <Typography variant="h4" gutterBottom>
+              Disease-based Drug Discovery
             </Typography>
-          <Stepper activeStep={activeStep} alternativeLabel sx={{ my: 4 }}>
+            <Stepper activeStep={activeStep} alternativeLabel sx={{ my: 4 }}>
               {steps.map((label) => (
                 <Step key={label}>
                   <StepLabel>{label}</StepLabel>
@@ -2170,6 +1963,359 @@ const DrugDiscovery = () => {
           )}
           </Paper>
         </Container>
+      </Box>
+      
+      {/* Session Details Dialog */}
+      <Dialog
+        open={sessionDetailsOpen}
+        onClose={() => setSessionDetailsOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        {selectedSession && (
+          <>
+            <DialogTitle sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'linear-gradient(45deg, #6366f1, #8b5cf6)',
+              color: 'white'
+            }}>
+              <Box>
+                <Typography variant="h6">{selectedSession.name}</Typography>
+                <Typography variant="subtitle2">
+                  {formatDate(selectedSession.timestamp)}
+                </Typography>
+              </Box>
+              <IconButton
+                aria-label="close"
+                onClick={() => setSessionDetailsOpen(false)}
+                sx={{ color: 'white' }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </DialogTitle>
+            <DialogContent dividers>
+              <Grid container spacing={3}>
+                {/* Disease Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <CoronavirusIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Disease Selection
+                      </Typography>
+                      {getDiseaseStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    {selectedSession.disease ? (
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="body1" fontWeight="bold">
+                          {selectedSession.disease.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          ID: {selectedSession.disease.id}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No disease selected
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+                
+                {/* Proteins Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <ScienceIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Selected Proteins
+                      </Typography>
+                      {getProteinStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    {selectedSession.selectedProteins && selectedSession.selectedProteins.length > 0 ? (
+                      <Grid container spacing={2} sx={{ mt: 1 }}>
+                        {selectedSession.selectedProteins.map(protein => (
+                          <Grid item xs={12} sm={6} md={4} key={protein.id}>
+                            <Card variant="outlined">
+                              <CardContent>
+                                <Typography variant="subtitle1" fontWeight="bold">
+                                  {protein.name || protein.gene_name || protein.id}
+                                </Typography>
+                                {protein.uniprot_id && (
+                                  <Typography variant="body2" color="text.secondary">
+                                    UniProt: {protein.uniprot_id}
+                                  </Typography>
+                                )}
+                                {protein.pdb_id && (
+                                  <Typography variant="body2" color="text.secondary">
+                                    PDB ID: {protein.pdb_id}
+                                  </Typography>
+                                )}
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No proteins selected
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+                
+                {/* Molecules Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <MedicationIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Molecule Analysis
+                      </Typography>
+                      {getMoleculeStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    
+                    {/* Generated molecules */}
+                    {selectedSession.generatedMolecules && selectedSession.generatedMolecules.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                          Generated Molecules ({selectedSession.generatedMolecules.length})
+                        </Typography>
+                        <Grid container spacing={2} sx={{ mt: 1 }}>
+                          {selectedSession.generatedMolecules.slice(0, 3).map(molecule => (
+                            <Grid item xs={12} sm={4} key={molecule.id}>
+                              <Card variant="outlined">
+                                <CardContent>
+                                  <Typography variant="subtitle2">
+                                    {molecule.name || `Molecule ${molecule.id}`}
+                                  </Typography>
+                                  <Typography 
+                                    variant="body2" 
+                                    color="text.secondary"
+                                    sx={{ 
+                                      fontFamily: 'monospace', 
+                                      fontSize: '0.8rem',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis'
+                                    }}
+                                  >
+                                    {molecule.smile}
+                                  </Typography>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                          ))}
+                          {selectedSession.generatedMolecules.length > 3 && (
+                            <Grid item xs={12}>
+                              <Typography variant="body2" color="text.secondary" align="center">
+                                +{selectedSession.generatedMolecules.length - 3} more molecules
+                              </Typography>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+                    
+                    {/* Selected drug molecules */}
+                    {selectedSession.selectedDrugs && selectedSession.selectedDrugs.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                          Selected Drug Molecules ({selectedSession.selectedDrugs.length})
+                        </Typography>
+                        <Grid container spacing={2} sx={{ mt: 1 }}>
+                          {selectedSession.selectedDrugs.slice(0, 3).map(drug => (
+                            <Grid item xs={12} sm={4} key={drug.id || drug.molecule_id || drug.molecule_chembl_id}>
+                              <Card variant="outlined">
+                                <CardContent>
+                                  <Typography variant="subtitle2">
+                                    {drug.name || drug.molecule_id || drug.chembl_id || 'Unknown'}
+                                  </Typography>
+                                  {(drug.smiles || drug.smile) && (
+                                    <Typography 
+                                      variant="body2" 
+                                      color="text.secondary"
+                                      sx={{ 
+                                        fontFamily: 'monospace', 
+                                        fontSize: '0.8rem',
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis'
+                                      }}
+                                    >
+                                      {drug.smiles || drug.smile}
+                                    </Typography>
+                                  )}
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                          ))}
+                          {selectedSession.selectedDrugs.length > 3 && (
+                            <Grid item xs={12}>
+                              <Typography variant="body2" color="text.secondary" align="center">
+                                +{selectedSession.selectedDrugs.length - 3} more drugs
+                              </Typography>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+                    
+                    {!getMoleculeStepCompletion(selectedSession) && (
+                      <Typography variant="body2" color="text.secondary">
+                        No molecules generated or selected
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+                
+                {/* Docking Results Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <HistoryIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Docking Results
+                      </Typography>
+                      {getDockingStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    
+                    {selectedSession.dockingResult ? (
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="subtitle1">
+                          Docking completed successfully
+                        </Typography>
+                        {selectedSession.dockingResult.position_confidence && (
+                          <Box sx={{ mt: 1 }}>
+                            <Typography variant="body2">
+                              Docking poses found: {selectedSession.dockingResult.ligand_positions?.length || 0}
+                            </Typography>
+                            <Typography variant="body2">
+                              Best confidence score: {
+                                Math.max(...(selectedSession.dockingResult.position_confidence || [0])).toFixed(2)
+                              }
+                            </Typography>
+                          </Box>
+                        )}
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No docking results available
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+              </Grid>
+            </DialogContent>
+            
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
+              <Button 
+                onClick={() => setSessionDetailsOpen(false)} 
+                sx={{ mr: 1 }}
+              >
+                Close
+              </Button>
+              <Button 
+                variant="contained" 
+                startIcon={<RestoreIcon />}
+                onClick={() => restoreFromSession(selectedSession)}
+              >
+                Restore Session
+              </Button>
+            </Box>
+          </>
+        )}
+      </Dialog>
+      
+      {/* Save Session Dialog */}
+      <Dialog
+        open={saveSessionDialogOpen}
+        onClose={() => setSaveSessionDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Save Current Session</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" paragraph>
+            Would you like to save your current research session before starting over?
+          </Typography>
+          <FormControl fullWidth sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Session Name
+            </Typography>
+            <input
+              type="text"
+              value={currentSessionName}
+              onChange={(e) => setCurrentSessionName(e.target.value)}
+              placeholder={`${selectedDisease?.name || 'Drug Discovery'} Session`}
+              style={{
+                width: '100%',
+                padding: '10px',
+                marginTop: '8px',
+                borderRadius: '4px',
+                border: '1px solid rgba(0,0,0,0.23)',
+                fontSize: '16px'
+              }}
+            />
+          </FormControl>
+        </DialogContent>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
+          <Button 
+            onClick={() => {
+              setSaveSessionDialogOpen(false);
+              resetWorkflow();
+            }} 
+            sx={{ mr: 1 }}
+          >
+            Don't Save
+          </Button>
+          <Button 
+            variant="contained"
+            onClick={() => {
+              // Use disease name as default if no name provided
+              const sessionName = currentSessionName || `${selectedDisease?.name || 'Drug Discovery'} Session`;
+              saveSessionAndReset(sessionName);
+            }}
+            disabled={!selectedDisease}
+          >
+            Save Session
+          </Button>
+        </Box>
+      </Dialog>
     </motion.div>
   );
 };
