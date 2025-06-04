@@ -27,7 +27,15 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  IconButton
+  IconButton,
+  Drawer,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon,
+  ListItemButton,
+  AppBar,
+  Toolbar
 } from '@mui/material';
 import { motion } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
@@ -43,6 +51,13 @@ import { proteinApi, moleculeApi, dockingApi, Molecule } from '../utils/api';
 import CloseIcon from '@mui/icons-material/Close';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import MenuIcon from '@mui/icons-material/Menu';
+import HistoryIcon from '@mui/icons-material/History';
+import ScienceIcon from '@mui/icons-material/Science';
+import MedicationIcon from '@mui/icons-material/Medication';
+import CoronavirusIcon from '@mui/icons-material/Coronavirus';
+import RestoreIcon from '@mui/icons-material/Restore';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 // Extend the Protein interface to include gene_name property
 interface Protein extends BaseProtein {
@@ -66,6 +81,19 @@ interface DrugMolecule {
   mechanism_of_action?: string;
   properties?: Record<string, any>;
   // Add other potential properties from the stream API
+}
+
+// Define a history session interface
+interface HistorySession {
+  id: string;
+  timestamp: Date;
+  name: string; // Session name (e.g. "Alzheimer's Research Session")
+  disease: DiseaseSuggestion | null;
+  selectedProteins: Protein[];
+  generatedMolecules: Molecule[];
+  selectedDrugs: DrugMolecule[];
+  dockingResult?: any;
+  dockingVisualization?: string | null;
 }
 
 const steps = [
@@ -176,22 +204,198 @@ const DrugDiscovery = () => {
   // Add this state near other docking states (around line 103):
   const [isDockingVisualizationVisible, setIsDockingVisualizationVisible] = useState<boolean>(true);
   
+  // Replace history state with sessions state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sessions, setSessions] = useState<HistorySession[]>([]);
+  const [currentSessionName, setCurrentSessionName] = useState<string>('');
+  const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<HistorySession | null>(null);
+  const [saveSessionDialogOpen, setSaveSessionDialogOpen] = useState(false);
+  
+  // Add current session ID to track ongoing work
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
   const theme = useTheme();
 
-  const handleNext = () => {
-    setActiveStep((prevActiveStep) => prevActiveStep + 1);
+  // Load sessions from localStorage on component mount
+  useEffect(() => {
+    const savedSessions = localStorage.getItem('drugDiscoverySessions');
+    if (savedSessions) {
+      try {
+        const parsedSessions = JSON.parse(savedSessions);
+        // Convert string timestamp back to Date objects
+        const sessionsWithDates = parsedSessions.map((session: any) => ({
+          ...session,
+          timestamp: new Date(session.timestamp)
+        }));
+        setSessions(sessionsWithDates);
+      } catch (e) {
+        console.error('Error parsing saved sessions:', e);
+      }
+    }
+  }, []);
+
+  // Save sessions to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('drugDiscoverySessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  // Create or update the current working session whenever relevant state changes
+  useEffect(() => {
+    // Only start tracking once a disease is selected
+    if (selectedDisease) {
+      updateOrCreateWorkingSession();
+    }
+  }, [selectedDisease, selectedProteins, generatedMolecules, proteinDrugs, selectedDrugs, dockingResult]);
+
+  // Function to create or update the current working session
+  const updateOrCreateWorkingSession = () => {
+    if (!selectedDisease) return;
+
+    const selectedProteinsList = proteins.filter(protein => selectedProteins[protein.id]);
+    const selectedDrugsList = proteinDrugs.filter(drug => {
+      const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+      return selectedDrugs[drugId];
+    });
+
+    const sessionName = currentSessionName || `${selectedDisease.name} Session`;
+    
+    // Create new session data
+    const sessionData: HistorySession = {
+      id: currentSessionId || Date.now().toString(),
+      timestamp: new Date(),
+      name: sessionName,
+      disease: selectedDisease,
+      selectedProteins: selectedProteinsList,
+      generatedMolecules,
+      selectedDrugs: selectedDrugsList,
+      dockingResult,
+      dockingVisualization
+    };
+
+    // If we don't have a current session ID, this is a new session
+    if (!currentSessionId) {
+      setCurrentSessionId(sessionData.id);
+      setSessions(prev => [sessionData, ...prev]);
+    } else {
+      // Otherwise update the existing session
+      setSessions(prev => 
+        prev.map(session => 
+          session.id === currentSessionId ? sessionData : session
+        )
+      );
+    }
   };
 
+  // Function to save current session with a specific name
+  const saveCurrentSession = (name: string) => {
+    if (!name.trim() || !selectedDisease) return;
+    
+    // Update session name
+    setCurrentSessionName(name);
+    
+    // Force update with new name
+    setTimeout(() => updateOrCreateWorkingSession(), 0);
+    
+    setSaveSessionDialogOpen(false);
+  };
+
+  // Function to restore state from a session
+  const restoreFromSession = (session: HistorySession) => {
+    if (!session || !session.disease) return;
+    
+    setSelectedDisease(session.disease);
+    
+    // Restore proteins and selected proteins
+    if (session.disease && session.selectedProteins) {
+      setProteins(session.selectedProteins);
+      
+      // Reconstruct selectedProteins state object
+      const proteinSelections: {[id: string]: boolean} = {};
+      session.selectedProteins.forEach(protein => {
+        proteinSelections[protein.id] = true;
+      });
+      setSelectedProteins(proteinSelections);
+    }
+    
+    // Restore generated molecules
+    if (session.generatedMolecules && session.generatedMolecules.length > 0) {
+      setGeneratedMolecules(session.generatedMolecules);
+    }
+    
+    // Restore drug molecules and selection state
+    if (session.selectedDrugs) {
+      setProteinDrugs(session.selectedDrugs);
+      
+      // Reconstruct selectedDrugs state object
+      const drugSelections: {[id: string]: boolean} = {};
+      session.selectedDrugs.forEach(drug => {
+        const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+        drugSelections[drugId] = true;
+      });
+      setSelectedDrugs(drugSelections);
+    }
+    
+    // Restore docking results if available
+    if (session.dockingResult) {
+      setDockingResult(session.dockingResult);
+    }
+    
+    if (session.dockingVisualization) {
+      setDockingVisualization(session.dockingVisualization);
+    }
+    
+    // Set to the final step to show the complete workflow results
+    setActiveStep(3);
+    
+    // Close dialogs
+    setDrawerOpen(false);
+    setSessionDetailsOpen(false);
+    setSelectedSession(null);
+  };
+
+  // Function to delete a session
+  const deleteSession = (sessionId: string) => {
+    setSessions(prev => prev.filter(session => session.id !== sessionId));
+  };
+
+  const handleNext = () => {
+    // If moving from disease selection to protein selection, make sure we have a session
+    if (activeStep === 0 && selectedDisease) {
+      updateOrCreateWorkingSession();
+    }
+    
+    setActiveStep((prevActiveStep) => prevActiveStep + 1);
+  };
+  
   const handleBack = () => {
     setActiveStep((prevActiveStep) => prevActiveStep - 1);
   };
 
   const handleReset = () => {
+    // If we have a session in progress, prompt to save it
+    if (selectedDisease) {
+      setSaveSessionDialogOpen(true);
+    } else {
+      resetWorkflow();
+    }
+  };
+
+  const resetWorkflow = () => {
+    // Clear all state to start fresh
     setActiveStep(0);
     setSelectedDisease(null);
     setProteins([]);
     setSelectedProteins({});
     setGeneratedMolecules([]);
+    setProteinDrugs([]);
+    setSelectedDrugs({});
+    setDockingResult(null);
+    setDockingVisualization(null);
+    
+    // Important: Clear the current session ID and name to ensure a new session will be created
+    setCurrentSessionName('');
+    setCurrentSessionId(null);
   };
 
   const onDiseaseSelect = async (disease: DiseaseSuggestion) => {
@@ -218,6 +422,11 @@ const DrugDiscovery = () => {
       
       // Clear any previously selected proteins
       setSelectedProteins({});
+      
+      // Set a default session name and create an initial session
+      setCurrentSessionName(`${disease.name} Research`);
+      
+      // We'll create the session in the effect when selectedDisease changes
       
     } catch (error) {
       console.error('Error fetching proteins:', error);
@@ -474,6 +683,10 @@ const DrugDiscovery = () => {
           setDockingVisualization(visualization.viewer_html);
           // Open modal to show results
           setDockingModalOpen(true);
+          
+          // Make sure session is updated with docking results
+          updateOrCreateWorkingSession();
+          
         } catch (vizError) {
           console.error('Error getting visualization:', vizError);
           setDockingError('Docking completed, but visualization failed to load.');
@@ -590,6 +803,77 @@ const DrugDiscovery = () => {
     }
   }, [dockingResult]);
 
+  // Format date for display in history list
+  const formatDate = (date: Date): string => {
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Get disease step completion status
+  const getDiseaseStepCompletion = (session: HistorySession): boolean => {
+    return !!session.disease;
+  };
+
+  // Get protein step completion status
+  const getProteinStepCompletion = (session: HistorySession): boolean => {
+    return session.selectedProteins && session.selectedProteins.length > 0;
+  };
+
+  // Get molecule step completion status
+  const getMoleculeStepCompletion = (session: HistorySession): boolean => {
+    return (session.generatedMolecules && session.generatedMolecules.length > 0) || 
+           (session.selectedDrugs && session.selectedDrugs.length > 0);
+  };
+
+  // Get docking step completion status
+  const getDockingStepCompletion = (session: HistorySession): boolean => {
+    return !!session.dockingResult;
+  };
+
+  // Function to save current session explicitly with a name and prepare for a new session
+  const saveSessionAndReset = (name: string) => {
+    if (!name.trim() || !selectedDisease) {
+      resetWorkflow();
+      return;
+    }
+    
+    // Save current session with the provided name
+    const sessionToSave = {
+      id: currentSessionId || Date.now().toString(),
+      timestamp: new Date(),
+      name: name,
+      disease: selectedDisease,
+      selectedProteins: proteins.filter(protein => selectedProteins[protein.id]),
+      generatedMolecules,
+      selectedDrugs: proteinDrugs.filter(drug => {
+        const drugId = drug.id || drug.molecule_id || drug.molecule_chembl_id || '';
+        return selectedDrugs[drugId];
+      }),
+      dockingResult,
+      dockingVisualization
+    };
+    
+    // Add as a new session or update the current one
+    if (!currentSessionId) {
+      setSessions(prev => [sessionToSave, ...prev]);
+    } else {
+      setSessions(prev => 
+        prev.map(session => 
+          session.id === currentSessionId ? sessionToSave : session
+        )
+      );
+    }
+    
+    // Reset for a new workflow
+    resetWorkflow();
+    setSaveSessionDialogOpen(false);
+  };
+
   return (
     <motion.div
       initial="initial"
@@ -598,7 +882,453 @@ const DrugDiscovery = () => {
       variants={pageVariants}
       transition={{ duration: 0.5 }}
     >
-      <Container maxWidth="lg" sx={{ mt: 6, mb: 8 }}>
+      {/* Hamburger menu and app bar */}
+      <AppBar position="static" color="transparent" elevation={0} sx={{mb: 2}}>
+        <Toolbar>
+          <IconButton 
+            edge="start" 
+            color="inherit" 
+            aria-label="menu"
+            onClick={() => setDrawerOpen(true)}
+            sx={{ mr: 2 }}
+          >
+            <MenuIcon />
+          </IconButton>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            D3AI Drug Discovery
+          </Typography>
+        </Toolbar>
+      </AppBar>
+      
+      {/* Sessions drawer */}
+      <Drawer
+        anchor="left"
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+      >
+        <Box
+          sx={{ width: 350 }}
+          role="presentation"
+        >
+          <Box sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
+            <Typography variant="h6" component="div">
+              Saved Sessions
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              View or restore previous research sessions
+            </Typography>
+          </Box>
+          
+          {sessions.length === 0 ? (
+            <Box sx={{ p: 3, textAlign: 'center' }}>
+              <HistoryIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
+              <Typography variant="body1" color="text.secondary">
+                No saved sessions yet
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Complete the workflow and save to create a session
+              </Typography>
+            </Box>
+          ) : (
+            <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
+              {sessions.map((session) => (
+                <ListItem
+                  key={session.id}
+                  disablePadding
+                  secondaryAction={
+                    <IconButton 
+                      edge="end" 
+                      aria-label="delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSession(session.id);
+                      }}
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  }
+                >
+                  <ListItemButton
+                    onClick={() => {
+                      setSelectedSession(session);
+                      setSessionDetailsOpen(true);
+                    }}
+                  >
+                    <ListItemIcon>
+                      <ScienceIcon />
+                    </ListItemIcon>
+                    <ListItemText 
+                      primary={session.name} 
+                      secondary={
+                        <React.Fragment>
+                          <Typography component="span" variant="body2">
+                            {session.disease?.name}
+                          </Typography>
+                          {" — "}{formatDate(session.timestamp)}
+                        </React.Fragment>
+                      }
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Box>
+      </Drawer>
+      
+      {/* Session Details Dialog */}
+      <Dialog
+        open={sessionDetailsOpen}
+        onClose={() => setSessionDetailsOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        {selectedSession && (
+          <>
+            <DialogTitle sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'linear-gradient(45deg, #6366f1, #8b5cf6)',
+              color: 'white'
+            }}>
+              <Box>
+                <Typography variant="h6">{selectedSession.name}</Typography>
+                <Typography variant="subtitle2">
+                  {formatDate(selectedSession.timestamp)}
+                </Typography>
+              </Box>
+              <IconButton
+                aria-label="close"
+                onClick={() => setSessionDetailsOpen(false)}
+                sx={{ color: 'white' }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </DialogTitle>
+            <DialogContent dividers>
+              <Grid container spacing={3}>
+                {/* Disease Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <CoronavirusIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Disease Selection
+                      </Typography>
+                      {getDiseaseStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    {selectedSession.disease ? (
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="body1" fontWeight="bold">
+                          {selectedSession.disease.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          ID: {selectedSession.disease.id}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No disease selected
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+                
+                {/* Proteins Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <ScienceIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Selected Proteins
+                      </Typography>
+                      {getProteinStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    {selectedSession.selectedProteins && selectedSession.selectedProteins.length > 0 ? (
+                      <Grid container spacing={2} sx={{ mt: 1 }}>
+                        {selectedSession.selectedProteins.map(protein => (
+                          <Grid item xs={12} sm={6} md={4} key={protein.id}>
+                            <Card variant="outlined">
+                              <CardContent>
+                                <Typography variant="subtitle1" fontWeight="bold">
+                                  {protein.name || protein.gene_name || protein.id}
+                                </Typography>
+                                {protein.uniprot_id && (
+                                  <Typography variant="body2" color="text.secondary">
+                                    UniProt: {protein.uniprot_id}
+                                  </Typography>
+                                )}
+                                {protein.pdb_id && (
+                                  <Typography variant="body2" color="text.secondary">
+                                    PDB ID: {protein.pdb_id}
+                                  </Typography>
+                                )}
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No proteins selected
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+                
+                {/* Molecules Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <MedicationIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Molecule Analysis
+                      </Typography>
+                      {getMoleculeStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    
+                    {/* Generated molecules */}
+                    {selectedSession.generatedMolecules && selectedSession.generatedMolecules.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                          Generated Molecules ({selectedSession.generatedMolecules.length})
+                        </Typography>
+                        <Grid container spacing={2} sx={{ mt: 1 }}>
+                          {selectedSession.generatedMolecules.slice(0, 3).map(molecule => (
+                            <Grid item xs={12} sm={4} key={molecule.id}>
+                              <Card variant="outlined">
+                                <CardContent>
+                                  <Typography variant="subtitle2">
+                                    {molecule.name || `Molecule ${molecule.id}`}
+                                  </Typography>
+                                  <Typography 
+                                    variant="body2" 
+                                    color="text.secondary"
+                                    sx={{ 
+                                      fontFamily: 'monospace', 
+                                      fontSize: '0.8rem',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis'
+                                    }}
+                                  >
+                                    {molecule.smile}
+                                  </Typography>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                          ))}
+                          {selectedSession.generatedMolecules.length > 3 && (
+                            <Grid item xs={12}>
+                              <Typography variant="body2" color="text.secondary" align="center">
+                                +{selectedSession.generatedMolecules.length - 3} more molecules
+                              </Typography>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+                    
+                    {/* Selected drug molecules */}
+                    {selectedSession.selectedDrugs && selectedSession.selectedDrugs.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                          Selected Drug Molecules ({selectedSession.selectedDrugs.length})
+                        </Typography>
+                        <Grid container spacing={2} sx={{ mt: 1 }}>
+                          {selectedSession.selectedDrugs.slice(0, 3).map(drug => (
+                            <Grid item xs={12} sm={4} key={drug.id || drug.molecule_id || drug.molecule_chembl_id}>
+                              <Card variant="outlined">
+                                <CardContent>
+                                  <Typography variant="subtitle2">
+                                    {drug.name || drug.molecule_id || drug.chembl_id || 'Unknown'}
+                                  </Typography>
+                                  {(drug.smiles || drug.smile) && (
+                                    <Typography 
+                                      variant="body2" 
+                                      color="text.secondary"
+                                      sx={{ 
+                                        fontFamily: 'monospace', 
+                                        fontSize: '0.8rem',
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis'
+                                      }}
+                                    >
+                                      {drug.smiles || drug.smile}
+                                    </Typography>
+                                  )}
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                          ))}
+                          {selectedSession.selectedDrugs.length > 3 && (
+                            <Grid item xs={12}>
+                              <Typography variant="body2" color="text.secondary" align="center">
+                                +{selectedSession.selectedDrugs.length - 3} more drugs
+                              </Typography>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+                    
+                    {!getMoleculeStepCompletion(selectedSession) && (
+                      <Typography variant="body2" color="text.secondary">
+                        No molecules generated or selected
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+                
+                {/* Docking Results Section */}
+                <Grid item xs={12}>
+                  <Paper elevation={1} sx={{ p: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <HistoryIcon sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="h6">
+                        Docking Results
+                      </Typography>
+                      {getDockingStepCompletion(selectedSession) && (
+                        <Chip 
+                          label="Completed" 
+                          color="success" 
+                          size="small" 
+                          sx={{ ml: 1 }} 
+                        />
+                      )}
+                    </Box>
+                    <Divider sx={{ my: 1 }} />
+                    
+                    {selectedSession.dockingResult ? (
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="subtitle1">
+                          Docking completed successfully
+                        </Typography>
+                        {selectedSession.dockingResult.position_confidence && (
+                          <Box sx={{ mt: 1 }}>
+                            <Typography variant="body2">
+                              Docking poses found: {selectedSession.dockingResult.ligand_positions?.length || 0}
+                            </Typography>
+                            <Typography variant="body2">
+                              Best confidence score: {
+                                Math.max(...(selectedSession.dockingResult.position_confidence || [0])).toFixed(2)
+                              }
+                            </Typography>
+                          </Box>
+                        )}
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No docking results available
+                      </Typography>
+                    )}
+                  </Paper>
+                </Grid>
+              </Grid>
+            </DialogContent>
+            
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
+              <Button 
+                onClick={() => setSessionDetailsOpen(false)} 
+                sx={{ mr: 1 }}
+              >
+                Close
+              </Button>
+              <Button 
+                variant="contained" 
+                startIcon={<RestoreIcon />}
+                onClick={() => restoreFromSession(selectedSession)}
+              >
+                Restore Session
+              </Button>
+            </Box>
+          </>
+        )}
+      </Dialog>
+      
+      {/* Save Session Dialog */}
+      <Dialog
+        open={saveSessionDialogOpen}
+        onClose={() => setSaveSessionDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Save Current Session</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" paragraph>
+            Would you like to save your current research session before starting over?
+          </Typography>
+          <FormControl fullWidth sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Session Name
+            </Typography>
+            <input
+              type="text"
+              value={currentSessionName}
+              onChange={(e) => setCurrentSessionName(e.target.value)}
+              placeholder={`${selectedDisease?.name || 'Drug Discovery'} Session`}
+              style={{
+                width: '100%',
+                padding: '10px',
+                marginTop: '8px',
+                borderRadius: '4px',
+                border: '1px solid rgba(0,0,0,0.23)',
+                fontSize: '16px'
+              }}
+            />
+          </FormControl>
+        </DialogContent>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
+          <Button 
+            onClick={() => {
+              setSaveSessionDialogOpen(false);
+              resetWorkflow();
+            }} 
+            sx={{ mr: 1 }}
+          >
+            Don't Save
+          </Button>
+          <Button 
+            variant="contained"
+            onClick={() => {
+              // Use disease name as default if no name provided
+              const sessionName = currentSessionName || `${selectedDisease?.name || 'Drug Discovery'} Session`;
+              saveSessionAndReset(sessionName);
+            }}
+            disabled={!selectedDisease}
+          >
+            Save Session
+          </Button>
+        </Box>
+      </Dialog>
+
+      <Container maxWidth="lg" sx={{ mt: 0, mb: 8 }}>
           <Paper 
           elevation={3} 
             sx={{ 
