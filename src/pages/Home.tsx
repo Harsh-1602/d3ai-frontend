@@ -18,11 +18,19 @@ import {
   Search,
   Analytics,
   Biotech,
+  Chat,
 } from '@mui/icons-material';
 import MoleculeVisualization from '../components/MoleculeVisualization';
 import AnimatedBackground from '../components/AnimatedBackground';
 
 const features = [
+  {
+    title: 'Disease Diagnosis Chat',
+    description: 'Interactive AI-powered chat assistant for disease diagnosis and health advice',
+    icon: <Chat fontSize="large" />,
+    gradient: 'linear-gradient(135deg, #f472b6 0%, #ec4899 100%)',
+    link: '/disease-chat'
+  },
   {
     title: 'Disease Analysis',
     description: 'Advanced disease prediction through symptom analysis and AI-powered diagnostics',

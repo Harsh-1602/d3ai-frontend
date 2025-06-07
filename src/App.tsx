@@ -12,6 +12,7 @@ import DrugDiscovery from './pages/DrugDiscovery';
 import About from './pages/About';
 import Team from './pages/Team';
 import Contact from './pages/Contact';
+import DiseaseChat from './pages/DiseaseChat';
 
 const theme = createTheme({
   palette: {
@@ -208,6 +209,7 @@ function App() {
           <Route path="/about" element={<About />} />
           <Route path="/team" element={<Team />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/disease-chat" element={<DiseaseChat />} />
         </Routes>
       </Router>
     </ThemeProvider>

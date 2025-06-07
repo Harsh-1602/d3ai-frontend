@@ -41,6 +41,7 @@ const Navbar = (props: Props) => {
 
   const navItems = [
     { text: 'Drug Discovery', path: '/drug-discovery' },
+    { text: 'Disease Chat', path: '/disease-chat' },
     { text: 'About', path: '/about' },
     { text: 'Team', path: '/team' },
     { text: 'Contact', path: '/contact' },
