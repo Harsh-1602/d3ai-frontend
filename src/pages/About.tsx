@@ -277,9 +277,9 @@ const teamMembers = [
     image: '/images/team/harsh-gupta.jpeg',
     bio: 'Expert in AI/ML and drug discovery technologies with a focus on developing innovative solutions.',
     social: {
-      linkedin: '#',
-      github: '#',
-      email: 'harsh@d3ai.com'
+      linkedin: '#https://www.linkedin.com/in/harsh-gupta-462866205/',
+      github: 'https://github.com/Harsh-1602',
+      email: 'guptaharsh0216@gmail.com'
     }
   },
   {
@@ -289,9 +289,9 @@ const teamMembers = [
     image: '/images/team/chanchal-kuntal.png',
     bio: 'Specialized in molecular modeling and AI-driven drug discovery processes.',
     social: {
-      linkedin: '#',
-      github: '#',
-      email: 'chanchal@d3ai.com'
+      linkedin: 'https://www.linkedin.com/in/chanchal-kuntal-6b5506251/',
+      github: 'https://github.com/Chanchal-D',
+      email: 'Chanchalkuntal398@gmail.com'
     }
   }
 ];
