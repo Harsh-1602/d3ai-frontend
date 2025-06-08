@@ -161,14 +161,14 @@ const Contact = () => {
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                       <Phone color="primary" sx={{ mr: 2 }} />
-                      <Typography>+1 (555) 123-4567</Typography>
+                      <Typography>+91 7060060523</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                       <LocationOn color="primary" sx={{ mr: 2 }} />
                       <Typography>
-                        123 Innovation Drive
+                        Laxminagar, Delhi
                         <br />
-                        Silicon Valley, CA 94025
+                        India
                       </Typography>
                     </Box>
                   </Box>
